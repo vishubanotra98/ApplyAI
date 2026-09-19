@@ -117,10 +117,50 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
     }
   };
 
-  const handleParseMasterResume = async () => {
+  const calculateHash = (str: string): string => {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = (hash << 5) - hash + char;
+      hash |= 0;
+    }
+    return hash.toString(36);
+  };
+
+  const handleParseMasterResume = async (force: boolean = false) => {
     const template = data.masterResume?.latexTemplate || data.resume?.latexTemplate;
     if (!template || template.trim().length < 10) {
       setParseError('Please provide a valid LaTeX template to parse.');
+      return;
+    }
+
+    const currentHash = calculateHash(template.trim());
+
+    // Check if the master resume has already been parsed with this exact content
+    if (!force && data.masterResume?.parsedHash === currentHash && data.masterResume?.profile) {
+      const cached = data.masterResume.profile;
+      const updatedData: StoredData = {
+        ...data,
+        profile: {
+          ...data.profile,
+          ...cached.profile,
+        },
+        stack: {
+          ...data.stack,
+          ...cached.stack,
+        },
+        resume: {
+          ...data.resume,
+          facts: {
+            ...data.resume.facts,
+            ...cached.facts,
+            stack: cached.stack,
+          },
+        },
+      };
+      setData(updatedData);
+      setParseMessage('Loaded cached profile for current master resume (already up to date).');
+      setTimeout(() => setParseMessage(null), 4000);
       return;
     }
 
@@ -152,6 +192,12 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
         masterResume: {
           latexTemplate: template,
           lastParsedAt: new Date().toLocaleDateString(),
+          parsedHash: currentHash,
+          profile: {
+            profile: parsed.profile,
+            stack: parsed.stack,
+            facts: parsed.facts,
+          },
         },
       };
 
@@ -449,7 +495,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
                 </label>
                 <button
                   id="applyai-parse-master-resume-btn"
-                  onClick={handleParseMasterResume}
+                  onClick={() => handleParseMasterResume(false)}
                   disabled={isParsing}
                   className="px-2 py-1 bg-emerald-950/80 hover:bg-emerald-900/80 text-emerald-300 border border-emerald-800/60 rounded text-[11px] flex items-center gap-1 transition-colors disabled:opacity-50"
                   title="Extract profile, stack, and facts from this master LaTeX"
@@ -496,6 +542,25 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
               }}
               className="w-full bg-neutral-950 border border-neutral-800 rounded p-2.5 font-mono text-[10px] text-neutral-300 focus:outline-none focus:border-neutral-600 select-text leading-relaxed"
             />
+
+            <div className="flex items-center justify-between text-[10px] text-neutral-500 pt-1">
+              <span>
+                {data.masterResume?.lastParsedAt
+                  ? `Profile last synced: ${data.masterResume.lastParsedAt}`
+                  : 'Profile not yet synced from this template'}
+              </span>
+              {data.masterResume?.profile && (
+                <button
+                  type="button"
+                  onClick={() => handleParseMasterResume(true)}
+                  disabled={isParsing}
+                  className="text-neutral-400 hover:text-neutral-200 underline transition-colors disabled:opacity-50"
+                  title="Force a complete re-parse bypassing cached profile"
+                >
+                  Force re-parse
+                </button>
+              )}
+            </div>
           </div>
         )}
 

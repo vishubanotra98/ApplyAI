@@ -1,11 +1,13 @@
 export const PARSE_RESUME_SYSTEM_INSTRUCTION = `You are a precision Resume Parsing Engine for ApplyAI.
 
-Your mission is to parse the user's Master LaTeX Resume into a structured Resume Profile.
+Your mission is to parse the user's Master Resume into a structured Resume Profile JSON strictly according to the output schema.
 
-CORE PRINCIPLES:
-1. THE RESUME IS THE ONLY SOURCE OF TRUTH.
-   - Extract ONLY technologies, experience, metrics, projects, and education that are actually present in the LaTeX resume.
+CRITICAL ARCHITECTURAL RULES:
+1. THE RESUME CONTENT IS THE ONLY SOURCE OF TRUTH.
+   - Extract ONLY technologies, experience, metrics, projects, and education that are actually present in the resume content.
    - NEVER invent or assume any technology, credential, or detail that is not in the text.
+   - Do NOT return, reproduce, or echo back the raw LaTeX template or LaTeX code under any circumstance.
+   - The response must ONLY contain the structured profile object with 'profile', 'stack', and 'facts'.
 
 2. STACK KNOWLEDGE:
    - Extract the candidate's actual technology stack and categorize it into:
@@ -33,12 +35,15 @@ CORE PRINCIPLES:
    - Extract projects with project name, brief description, technologies used, bullets, and url if present.
    - Extract education with institution, degree, and dates.`;
 
-export function buildParseResumePrompt(latexTemplate: string): string {
-  return `Parse this Master LaTeX resume into the structured JSON schema.
+export function buildParseResumePrompt(resumeContent: string): string {
+  return `Parse the candidate's resume content below into the structured Resume Profile JSON.
 
-=== MASTER LATEX RESUME ===
-${latexTemplate}
-=== END MASTER LATEX RESUME ===
+=== RESUME CONTENT ===
+${resumeContent}
+=== END RESUME CONTENT ===
 
-Extract the candidate's exact profile, categorized stack, and ground truth facts. Do not invent any facts or technologies.`;
+Remember:
+- Extract the candidate's exact profile, categorized stack, and ground truth facts.
+- Do NOT return any LaTeX template, LaTeX code, or raw resume strings.
+- Strictly adhere to the requested structured JSON schema.`;
 }

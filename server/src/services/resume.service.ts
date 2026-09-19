@@ -8,6 +8,7 @@ import { promisify } from 'util';
 import { getGeminiClient, getModelName, extractJsonFromText } from './gemini.service';
 import { RESUME_SYSTEM_INSTRUCTION, buildResumeTailorPrompt } from '../prompts/resume.prompt';
 import { PARSE_RESUME_SYSTEM_INSTRUCTION, buildParseResumePrompt } from '../prompts/parseResume.prompt';
+import { extractTextFromLatex } from '../utils/latexParser';
 import {
   TailorResumeRequest,
   TailorResumeResponse,
@@ -168,6 +169,8 @@ export async function tailorResume(data: TailorResumeRequest): Promise<TailorRes
 /**
  * Parses a Master LaTeX resume once into a structured Resume Profile,
  * extracting the categorized tech stack, ground truth experience, and contact profile.
+ * Preprocesses the LaTeX to remove formatting macros and comments, ensuring
+ * the LLM receives only textual resume content and responds ONLY with structured profile data.
  */
 export async function parseMasterResume(
   data: ParseMasterResumeRequest
@@ -178,13 +181,17 @@ export async function parseMasterResume(
     throw new AppError(400, 'Master LaTeX resume template is required to parse.');
   }
 
+  // 1. Locally extract clean text from the LaTeX template to reduce token overhead and strip LaTeX commands
+  const cleanResumeText = extractTextFromLatex(latexTemplate);
+  const promptContent = cleanResumeText && cleanResumeText.length > 50 ? cleanResumeText : latexTemplate;
+
   const ai = getGeminiClient();
   const model = getModelName();
 
   try {
     const response = await ai.models.generateContent({
       model,
-      contents: buildParseResumePrompt(latexTemplate),
+      contents: buildParseResumePrompt(promptContent),
       config: {
         systemInstruction: PARSE_RESUME_SYSTEM_INSTRUCTION,
         responseMimeType: 'application/json',
@@ -197,12 +204,13 @@ export async function parseMasterResume(
                 firstName: { type: Type.STRING },
                 lastName: { type: Type.STRING },
                 email: { type: Type.STRING },
-                phone: { type: Type.STRING },
-                linkedin: { type: Type.STRING },
-                github: { type: Type.STRING },
-                portfolio: { type: Type.STRING },
-                location: { type: Type.STRING },
+                phone: { type: Type.STRING, nullable: true },
+                linkedin: { type: Type.STRING, nullable: true },
+                github: { type: Type.STRING, nullable: true },
+                portfolio: { type: Type.STRING, nullable: true },
+                location: { type: Type.STRING, nullable: true },
               },
+              required: ['firstName', 'lastName', 'email'],
             },
             stack: {
               type: Type.OBJECT,
@@ -234,7 +242,7 @@ export async function parseMasterResume(
             facts: {
               type: Type.OBJECT,
               properties: {
-                summary: { type: Type.STRING },
+                summary: { type: Type.STRING, nullable: true },
                 skills: { type: Type.ARRAY, items: { type: Type.STRING } },
                 experience: {
                   type: Type.ARRAY,
@@ -243,7 +251,7 @@ export async function parseMasterResume(
                     properties: {
                       company: { type: Type.STRING },
                       role: { type: Type.STRING },
-                      dates: { type: Type.STRING },
+                      dates: { type: Type.STRING, nullable: true },
                       bullets: { type: Type.ARRAY, items: { type: Type.STRING } },
                       technologies: { type: Type.ARRAY, items: { type: Type.STRING } },
                     },
@@ -259,7 +267,7 @@ export async function parseMasterResume(
                       description: { type: Type.STRING },
                       technologies: { type: Type.ARRAY, items: { type: Type.STRING } },
                       bullets: { type: Type.ARRAY, items: { type: Type.STRING } },
-                      url: { type: Type.STRING },
+                      url: { type: Type.STRING, nullable: true },
                     },
                     required: ['name', 'description', 'technologies', 'bullets'],
                   },
@@ -271,7 +279,7 @@ export async function parseMasterResume(
                     properties: {
                       institution: { type: Type.STRING },
                       degree: { type: Type.STRING },
-                      dates: { type: Type.STRING },
+                      dates: { type: Type.STRING, nullable: true },
                     },
                     required: ['institution', 'degree'],
                   },
@@ -286,13 +294,32 @@ export async function parseMasterResume(
     });
 
     const rawText = response.text;
-    if (!rawText) {
-      throw new AppError(500, 'Failed to parse resume from model.');
+    if (!rawText || rawText.trim().length === 0) {
+      throw new AppError(500, 'Received empty response from AI model during resume parsing.');
     }
 
-    const parsed = JSON.parse(extractJsonFromText(rawText));
-    const validated = ParseMasterResumeResponseSchema.parse(parsed);
-    return validated;
+    const cleanedJson = extractJsonFromText(rawText);
+    let parsed: any;
+    try {
+      parsed = JSON.parse(cleanedJson);
+    } catch (jsonErr) {
+      const msg = jsonErr instanceof Error ? jsonErr.message : String(jsonErr);
+      throw new AppError(500, `Failed to parse structured JSON from model response: ${msg}`);
+    }
+
+    // Explicitly guarantee no LaTeX template leaked into the profile response object
+    if (parsed.latexTemplate) delete parsed.latexTemplate;
+    if (parsed.latex) delete parsed.latex;
+    if (parsed.template) delete parsed.template;
+    if (parsed.updatedLatex) delete parsed.updatedLatex;
+
+    const validationResult = ParseMasterResumeResponseSchema.safeParse(parsed);
+    if (!validationResult.success) {
+      const issues = validationResult.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join(', ');
+      throw new AppError(500, `Profile response did not match expected schema: ${issues}`);
+    }
+
+    return validationResult.data;
   } catch (error) {
     if (error instanceof AppError) throw error;
     const msg = error instanceof Error ? error.message : String(error);

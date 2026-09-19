@@ -62,6 +62,8 @@ export interface ResumeProfile {
 export interface MasterResume {
   latexTemplate: string;
   lastParsedAt?: string;
+  parsedHash?: string;
+  profile?: ResumeProfile;
 }
 
 export interface ResumeData {
