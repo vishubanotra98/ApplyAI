@@ -70,16 +70,37 @@ if (typeof chrome !== 'undefined' && chrome?.runtime?.onMessage) {
   });
 }
 
-// Inject Floating ✦ Widget into page
+// Inject Floating ✦ Widget into page with isolated Shadow DOM styling
 function initFloatingWidget() {
   // Avoid duplicate injection
   if (document.getElementById('applyai-root-container')) return;
 
   const container = document.createElement('div');
   container.id = 'applyai-root-container';
+  container.style.position = 'fixed';
+  container.style.zIndex = '2147483647';
+  container.style.bottom = '0';
+  container.style.right = '0';
+  container.style.pointerEvents = 'auto';
   document.body.appendChild(container);
 
-  const root = createRoot(container);
+  // Attach Shadow DOM for style encapsulation so host website styles don't break extension UI
+  const shadowRoot = container.attachShadow({ mode: 'open' });
+
+  // Inject extension stylesheet link into shadow root
+  if (typeof chrome !== 'undefined' && chrome.runtime?.getURL) {
+    const styleLink = document.createElement('link');
+    styleLink.rel = 'stylesheet';
+    // Link to CSS file emitted by Vite build
+    styleLink.href = chrome.runtime.getURL('assets/style.css');
+    shadowRoot.appendChild(styleLink);
+  }
+
+  const appMount = document.createElement('div');
+  appMount.id = 'applyai-widget-host';
+  shadowRoot.appendChild(appMount);
+
+  const root = createRoot(appMount);
   root.render(
     <React.StrictMode>
       <FloatingWidget pageTextProvider={extractPageData} />
