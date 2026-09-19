@@ -1,9 +1,23 @@
 import { Router, Request, Response } from 'express';
-import { CompilePdfRequestSchema, TailorResumeRequestSchema } from '../schemas/resume.schema';
-import { compileLatexToPdf, tailorResume } from '../services/resume.service';
+import {
+  CompilePdfRequestSchema,
+  TailorResumeRequestSchema,
+  ParseMasterResumeRequestSchema,
+} from '../schemas/resume.schema';
+import { compileLatexToPdf, tailorResume, parseMasterResume } from '../services/resume.service';
 import { handleApiError } from '../utils/errors';
 
 export const resumeRouter = Router();
+
+resumeRouter.post('/parse', async (req: Request, res: Response) => {
+  try {
+    const validatedInput = ParseMasterResumeRequestSchema.parse(req.body);
+    const result = await parseMasterResume(validatedInput);
+    return res.status(200).json(result);
+  } catch (error) {
+    return handleApiError(res, error, 'Failed to parse master resume.');
+  }
+});
 
 resumeRouter.post('/tailor', async (req: Request, res: Response) => {
   try {

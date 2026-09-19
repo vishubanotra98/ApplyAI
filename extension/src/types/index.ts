@@ -9,6 +9,19 @@ export interface StoredProfile {
   location?: string;
 }
 
+export interface TechStack {
+  languages: string[];
+  frontend: string[];
+  backend: string[];
+  databases: string[];
+  stateManagement: string[];
+  styling: string[];
+  devTools: string[];
+  cloud: string[];
+  queues: string[];
+  other: string[];
+}
+
 export interface ExperienceFact {
   company: string;
   role: string;
@@ -34,9 +47,21 @@ export interface EducationFact {
 export interface ResumeFacts {
   summary?: string;
   skills: string[];
+  stack?: TechStack;
   experience: ExperienceFact[];
   projects: ProjectFact[];
   education?: EducationFact[];
+}
+
+export interface ResumeProfile {
+  profile: StoredProfile;
+  stack: TechStack;
+  facts: ResumeFacts;
+}
+
+export interface MasterResume {
+  latexTemplate: string;
+  lastParsedAt?: string;
 }
 
 export interface ResumeData {
@@ -51,6 +76,8 @@ export interface AppSettings {
 
 export interface StoredData {
   profile: StoredProfile;
+  stack: TechStack;
+  masterResume: MasterResume;
   resume: ResumeData;
   settings: AppSettings;
 }
@@ -67,15 +94,45 @@ export interface JobDescription {
   keywords: string[];
 }
 
+export interface ResumeAnalysis {
+  matchedSkills: string[];
+  matchedTechnologies: string[];
+  missingTechnologies: string[];
+  relevantExperience: string[];
+  relevantProjects: string[];
+}
+
 export interface ResumeChange {
   section: string;
-  change: string;
-  reason: string;
+  type: 'rewrite' | 'reorder' | 'emphasis' | 'prune' | string;
+  description: string;
+  change?: string;
+  reason?: string;
 }
 
 export interface TailoredResumeResult {
+  job: JobDescription;
+  resumeAnalysis: ResumeAnalysis;
   updatedLatex: string;
   changes: ResumeChange[];
+  changesSummary?: string[];
+}
+
+export interface TailoredEmailResult {
+  subject: string;
+  body: string;
+}
+
+export interface GenerateOutreachEmailRequest {
+  job: JobDescription;
+  resumeFacts: ResumeFacts;
+  stack?: TechStack;
+  profile?: StoredProfile;
+  recruiter?: {
+    name?: string;
+    title?: string | null;
+    company?: string | null;
+  };
 }
 
 export interface RecruiterResult {
@@ -95,4 +152,4 @@ export interface RecruiterSearchResponse {
   notes?: string;
 }
 
-export type ExtensionActiveTab = 'apply' | 'resume' | 'recruiter' | 'settings';
+export type ExtensionActiveTab = 'apply' | 'results' | 'resume' | 'recruiter' | 'settings';

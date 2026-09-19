@@ -3,7 +3,11 @@ import {
   JobDescription,
   RecruiterSearchResponse,
   ResumeFacts,
+  StoredProfile,
+  TailoredEmailResult,
+  GenerateOutreachEmailRequest,
   TailoredResumeResult,
+  TechStack,
 } from '../types';
 
 export class ApiError extends Error {
@@ -85,10 +89,26 @@ export async function analyzeJdApi(params: {
   });
 }
 
+export async function parseMasterResumeApi(latexTemplate: string): Promise<{
+  profile: StoredProfile;
+  stack: TechStack;
+  facts: ResumeFacts;
+}> {
+  return request<{
+    profile: StoredProfile;
+    stack: TechStack;
+    facts: ResumeFacts;
+  }>('/api/resume/parse', {
+    method: 'POST',
+    body: JSON.stringify({ latexTemplate }),
+  });
+}
+
 export async function tailorResumeApi(params: {
   job: JobDescription;
   resumeFacts: ResumeFacts;
   latexTemplate: string;
+  stack?: TechStack;
 }): Promise<TailoredResumeResult> {
   return request<TailoredResumeResult>('/api/resume/tailor', {
     method: 'POST',
@@ -136,3 +156,13 @@ export async function compilePdfApi(latex: string): Promise<Blob> {
 
   return response.blob();
 }
+
+export async function generateOutreachEmailApi(
+  params: GenerateOutreachEmailRequest
+): Promise<TailoredEmailResult> {
+  return request<TailoredEmailResult>('/api/email/generate', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
+}
+

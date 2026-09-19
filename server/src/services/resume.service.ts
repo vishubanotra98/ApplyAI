@@ -7,17 +7,21 @@ import path from 'path';
 import { promisify } from 'util';
 import { getGeminiClient, getModelName, extractJsonFromText } from './gemini.service';
 import { RESUME_SYSTEM_INSTRUCTION, buildResumeTailorPrompt } from '../prompts/resume.prompt';
+import { PARSE_RESUME_SYSTEM_INSTRUCTION, buildParseResumePrompt } from '../prompts/parseResume.prompt';
 import {
   TailorResumeRequest,
   TailorResumeResponse,
   TailorResumeResponseSchema,
+  ParseMasterResumeRequest,
+  ParseMasterResumeResponse,
+  ParseMasterResumeResponseSchema,
 } from '../schemas/resume.schema';
 import { AppError } from '../utils/errors';
 
 const execFileAsync = promisify(execFile);
 
 export async function tailorResume(data: TailorResumeRequest): Promise<TailorResumeResponse> {
-  const { job, resumeFacts, latexTemplate } = data;
+  const { job, resumeFacts, latexTemplate, stack } = data;
 
   if (!latexTemplate || latexTemplate.trim().length < 10) {
     throw new AppError(400, 'A valid master LaTeX resume template is required.');
@@ -29,31 +33,83 @@ export async function tailorResume(data: TailorResumeRequest): Promise<TailorRes
   try {
     const response = await ai.models.generateContent({
       model,
-      contents: buildResumeTailorPrompt(job, resumeFacts, latexTemplate),
+      contents: buildResumeTailorPrompt(job, resumeFacts, latexTemplate, stack),
       config: {
         systemInstruction: RESUME_SYSTEM_INSTRUCTION,
         responseMimeType: 'application/json',
         responseSchema: {
           type: Type.OBJECT,
           properties: {
+            resumeAnalysis: {
+              type: Type.OBJECT,
+              properties: {
+                matchedSkills: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                  description: 'Skills explicitly present in candidate facts that match the job description',
+                },
+                matchedTechnologies: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                  description: 'Candidate tech stack items that align with JD requirements',
+                },
+                missingTechnologies: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                  description: 'Technologies required or mentioned in JD that candidate does NOT have; strictly omitted from resume',
+                },
+                relevantExperience: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                  description: 'Candidate work experiences most aligned to emphasize',
+                },
+                relevantProjects: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                  description: 'Candidate projects most aligned to emphasize',
+                },
+              },
+              required: [
+                'matchedSkills',
+                'matchedTechnologies',
+                'missingTechnologies',
+                'relevantExperience',
+                'relevantProjects',
+              ],
+            },
             updatedLatex: {
               type: Type.STRING,
-              description: 'The complete, compilable updated LaTeX resume code without markdown code blocks',
+              description: 'The tailored compilable LaTeX code preserving all document macros, commands, and layout',
+            },
+            changesSummary: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+              description: 'Concise summary bullets of changes made based on existing facts (e.g. Emphasized React and TypeScript, Highlighted ReactFlow, Selected Subtend project, Reworded 2 bullets)',
             },
             changes: {
               type: Type.ARRAY,
               items: {
                 type: Type.OBJECT,
                 properties: {
-                  section: { type: Type.STRING, description: 'Resume section modified (e.g., Experience, Skills, Projects)' },
-                  change: { type: Type.STRING, description: 'Summary of the specific factual change made' },
-                  reason: { type: Type.STRING, description: 'Objective reason why this emphasizes alignment with the job description' },
+                  section: {
+                    type: Type.STRING,
+                    description: 'Section or company/project modified (e.g. Vodex, Technical Skills, Projects)',
+                  },
+                  type: {
+                    type: Type.STRING,
+                    enum: ['rewrite', 'reorder', 'emphasis', 'prune'],
+                    description: 'Classification of the modification',
+                  },
+                  description: {
+                    type: Type.STRING,
+                    description: 'Detailed description explaining how existing facts were emphasized for this JD',
+                  },
                 },
-                required: ['section', 'change', 'reason'],
+                required: ['section', 'type', 'description'],
               },
             },
           },
-          required: ['updatedLatex', 'changes'],
+          required: ['resumeAnalysis', 'updatedLatex', 'changes'],
         },
       },
     });
@@ -70,10 +126,33 @@ export async function tailorResume(data: TailorResumeRequest): Promise<TailorRes
       parsed.updatedLatex = parsed.updatedLatex.replace(/^```latex\s*/i, '').replace(/```$/i, '').trim();
     }
 
-    const validated = TailorResumeResponseSchema.parse(parsed);
+    // Format concise change summary bullets
+    const rawChanges = parsed.changes || [];
+    const derivedSummary: string[] = (parsed.changesSummary && parsed.changesSummary.length > 0)
+      ? parsed.changesSummary
+      : rawChanges.map((c: any) => c.description || c.change || `${c.type}: ${c.section}`).slice(0, 6);
+
+    // Attach original job description to the returned response object
+    const finalPayload = {
+      job,
+      resumeAnalysis: parsed.resumeAnalysis || {
+        matchedSkills: [],
+        matchedTechnologies: [],
+        missingTechnologies: [],
+        relevantExperience: [],
+        relevantProjects: [],
+      },
+      updatedLatex: parsed.updatedLatex,
+      changes: rawChanges,
+      changesSummary: derivedSummary,
+    };
+
+    const validated = TailorResumeResponseSchema.parse(finalPayload);
 
     // Sanity check: Ensure LaTeX has structural markers
-    const hasDocClass = validated.updatedLatex.includes('\\documentclass') || validated.updatedLatex.includes('\\begin{document}');
+    const hasDocClass =
+      validated.updatedLatex.includes('\\documentclass') ||
+      validated.updatedLatex.includes('\\begin{document}');
     if (!hasDocClass && latexTemplate.includes('\\documentclass')) {
       throw new AppError(500, 'Generated LaTeX was missing core document structure.');
     }
@@ -83,6 +162,141 @@ export async function tailorResume(data: TailorResumeRequest): Promise<TailorRes
     if (error instanceof AppError) throw error;
     const msg = error instanceof Error ? error.message : String(error);
     throw new AppError(500, `Resume tailoring failed: ${msg}`);
+  }
+}
+
+/**
+ * Parses a Master LaTeX resume once into a structured Resume Profile,
+ * extracting the categorized tech stack, ground truth experience, and contact profile.
+ */
+export async function parseMasterResume(
+  data: ParseMasterResumeRequest
+): Promise<ParseMasterResumeResponse> {
+  const { latexTemplate } = data;
+
+  if (!latexTemplate || latexTemplate.trim().length < 10) {
+    throw new AppError(400, 'Master LaTeX resume template is required to parse.');
+  }
+
+  const ai = getGeminiClient();
+  const model = getModelName();
+
+  try {
+    const response = await ai.models.generateContent({
+      model,
+      contents: buildParseResumePrompt(latexTemplate),
+      config: {
+        systemInstruction: PARSE_RESUME_SYSTEM_INSTRUCTION,
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            profile: {
+              type: Type.OBJECT,
+              properties: {
+                firstName: { type: Type.STRING },
+                lastName: { type: Type.STRING },
+                email: { type: Type.STRING },
+                phone: { type: Type.STRING },
+                linkedin: { type: Type.STRING },
+                github: { type: Type.STRING },
+                portfolio: { type: Type.STRING },
+                location: { type: Type.STRING },
+              },
+            },
+            stack: {
+              type: Type.OBJECT,
+              properties: {
+                languages: { type: Type.ARRAY, items: { type: Type.STRING } },
+                frontend: { type: Type.ARRAY, items: { type: Type.STRING } },
+                backend: { type: Type.ARRAY, items: { type: Type.STRING } },
+                databases: { type: Type.ARRAY, items: { type: Type.STRING } },
+                stateManagement: { type: Type.ARRAY, items: { type: Type.STRING } },
+                styling: { type: Type.ARRAY, items: { type: Type.STRING } },
+                devTools: { type: Type.ARRAY, items: { type: Type.STRING } },
+                cloud: { type: Type.ARRAY, items: { type: Type.STRING } },
+                queues: { type: Type.ARRAY, items: { type: Type.STRING } },
+                other: { type: Type.ARRAY, items: { type: Type.STRING } },
+              },
+              required: [
+                'languages',
+                'frontend',
+                'backend',
+                'databases',
+                'stateManagement',
+                'styling',
+                'devTools',
+                'cloud',
+                'queues',
+                'other',
+              ],
+            },
+            facts: {
+              type: Type.OBJECT,
+              properties: {
+                summary: { type: Type.STRING },
+                skills: { type: Type.ARRAY, items: { type: Type.STRING } },
+                experience: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      company: { type: Type.STRING },
+                      role: { type: Type.STRING },
+                      dates: { type: Type.STRING },
+                      bullets: { type: Type.ARRAY, items: { type: Type.STRING } },
+                      technologies: { type: Type.ARRAY, items: { type: Type.STRING } },
+                    },
+                    required: ['company', 'role', 'bullets'],
+                  },
+                },
+                projects: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      name: { type: Type.STRING },
+                      description: { type: Type.STRING },
+                      technologies: { type: Type.ARRAY, items: { type: Type.STRING } },
+                      bullets: { type: Type.ARRAY, items: { type: Type.STRING } },
+                      url: { type: Type.STRING },
+                    },
+                    required: ['name', 'description', 'technologies', 'bullets'],
+                  },
+                },
+                education: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      institution: { type: Type.STRING },
+                      degree: { type: Type.STRING },
+                      dates: { type: Type.STRING },
+                    },
+                    required: ['institution', 'degree'],
+                  },
+                },
+              },
+              required: ['skills', 'experience', 'projects'],
+            },
+          },
+          required: ['profile', 'stack', 'facts'],
+        },
+      },
+    });
+
+    const rawText = response.text;
+    if (!rawText) {
+      throw new AppError(500, 'Failed to parse resume from model.');
+    }
+
+    const parsed = JSON.parse(extractJsonFromText(rawText));
+    const validated = ParseMasterResumeResponseSchema.parse(parsed);
+    return validated;
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    const msg = error instanceof Error ? error.message : String(error);
+    throw new AppError(500, `Master resume parsing failed: ${msg}`);
   }
 }
 
@@ -142,7 +356,10 @@ export async function compileLatexToPdf(latex: string): Promise<Buffer> {
     );
 
     if (!fs.existsSync(pdfPath)) {
-      throw new AppError(500, 'pdflatex exited without generating a PDF file. Please check for syntax errors in your LaTeX template.');
+      throw new AppError(
+        500,
+        'pdflatex exited without generating a PDF file. Please check for syntax errors in your LaTeX template.'
+      );
     }
 
     const pdfBuffer = await fs.promises.readFile(pdfPath);

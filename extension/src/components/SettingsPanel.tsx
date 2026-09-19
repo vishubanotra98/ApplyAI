@@ -1,7 +1,25 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Save, RotateCcw, Check, Plus, Trash2, Code2, User, Briefcase, Server, CheckCircle2 } from 'lucide-react';
-import { StoredData, ExperienceFact, ProjectFact } from '../types';
+import {
+  ArrowLeft,
+  Save,
+  RotateCcw,
+  Check,
+  Plus,
+  Trash2,
+  Code2,
+  User,
+  Briefcase,
+  Server,
+  CheckCircle2,
+  Sparkles,
+  Layers,
+  Upload,
+  AlertCircle,
+  RefreshCw,
+} from 'lucide-react';
+import { StoredData, ExperienceFact, ProjectFact, TechStack } from '../types';
 import { getStoredData, saveStoredData, resetToDefaults } from '../storage/storage';
+import { parseMasterResumeApi } from '../api/client';
 
 interface SettingsPanelProps {
   onBack: () => void;
@@ -9,9 +27,12 @@ interface SettingsPanelProps {
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
   const [data, setData] = useState<StoredData | null>(null);
-  const [activeTab, setActiveTab] = useState<'profile' | 'facts' | 'latex' | 'backend'>('profile');
+  const [activeTab, setActiveTab] = useState<'master' | 'stack' | 'facts' | 'profile' | 'backend'>('master');
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [isParsing, setIsParsing] = useState(false);
+  const [parseMessage, setParseMessage] = useState<string | null>(null);
+  const [parseError, setParseError] = useState<string | null>(null);
 
   useEffect(() => {
     getStoredData().then((loaded) => setData(loaded));
@@ -40,7 +61,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
   };
 
   const handleReset = async () => {
-    if (window.confirm('Reset all profile, resume facts, and settings to default sample data?')) {
+    if (window.confirm('Reset all profile, tech stack, resume facts, and master LaTeX to defaults?')) {
       const reset = await resetToDefaults();
       setData(reset);
       setSaveSuccess(true);
@@ -48,15 +69,123 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
     }
   };
 
+  const handleParseMasterResume = async () => {
+    const template = data.masterResume?.latexTemplate || data.resume?.latexTemplate;
+    if (!template || template.trim().length < 10) {
+      setParseError('Please provide a valid LaTeX template to parse.');
+      return;
+    }
+
+    setIsParsing(true);
+    setParseMessage(null);
+    setParseError(null);
+
+    try {
+      const parsed = await parseMasterResumeApi(template);
+
+      const updatedData: StoredData = {
+        ...data,
+        profile: {
+          ...data.profile,
+          ...parsed.profile,
+        },
+        stack: {
+          ...data.stack,
+          ...parsed.stack,
+        },
+        resume: {
+          ...data.resume,
+          facts: {
+            ...data.resume.facts,
+            ...parsed.facts,
+            stack: parsed.stack,
+          },
+        },
+        masterResume: {
+          latexTemplate: template,
+          lastParsedAt: new Date().toLocaleDateString(),
+        },
+      };
+
+      setData(updatedData);
+      await saveStoredData(updatedData);
+      setParseMessage('Successfully parsed stack, profile, and ground-truth facts from master resume!');
+      setTimeout(() => setParseMessage(null), 4000);
+    } catch (err) {
+      setParseError(err instanceof Error ? err.message : 'Failed to parse master resume.');
+    } finally {
+      setIsParsing(false);
+    }
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target?.result as string;
+      if (content) {
+        setData((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            masterResume: {
+              ...prev.masterResume,
+              latexTemplate: content,
+            },
+            resume: {
+              ...prev.resume,
+              latexTemplate: content,
+            },
+          };
+        });
+      }
+    };
+    reader.readAsText(file);
+  };
+
   // Profile handlers
   const updateProfile = (field: keyof StoredData['profile'], val: string) => {
     setData((prev) => (!prev ? prev : { ...prev, profile: { ...prev.profile, [field]: val } }));
   };
 
+  // Stack handlers
+  const updateStackCategory = (category: keyof TechStack, itemsString: string) => {
+    const items = itemsString
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    setData((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        stack: {
+          ...prev.stack,
+          [category]: items,
+        },
+      };
+    });
+  };
+
   // Facts handlers
   const updateSkills = (csv: string) => {
-    const list = csv.split(',').map((s) => s.trim()).filter(Boolean);
-    setData((prev) => (!prev ? prev : { ...prev, resume: { ...prev.resume, facts: { ...prev.resume.facts, skills: list } } }));
+    const list = csv
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    setData((prev) =>
+      !prev
+        ? prev
+        : {
+            ...prev,
+            resume: {
+              ...prev.resume,
+              facts: { ...prev.resume.facts, skills: list },
+            },
+          }
+    );
   };
 
   const addExperience = () => {
@@ -67,29 +196,37 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
       bullets: ['Engineered key feature achieving measurable performance increase.'],
       technologies: ['TypeScript', 'React'],
     };
-    setData((prev) => (!prev ? prev : {
-      ...prev,
-      resume: {
-        ...prev.resume,
-        facts: {
-          ...prev.resume.facts,
-          experience: [newExp, ...prev.resume.facts.experience],
-        },
-      },
-    }));
+    setData((prev) =>
+      !prev
+        ? prev
+        : {
+            ...prev,
+            resume: {
+              ...prev.resume,
+              facts: {
+                ...prev.resume.facts,
+                experience: [newExp, ...prev.resume.facts.experience],
+              },
+            },
+          }
+    );
   };
 
   const removeExperience = (index: number) => {
-    setData((prev) => (!prev ? prev : {
-      ...prev,
-      resume: {
-        ...prev.resume,
-        facts: {
-          ...prev.resume.facts,
-          experience: prev.resume.facts.experience.filter((_, i) => i !== index),
-        },
-      },
-    }));
+    setData((prev) =>
+      !prev
+        ? prev
+        : {
+            ...prev,
+            resume: {
+              ...prev.resume,
+              facts: {
+                ...prev.resume.facts,
+                experience: prev.resume.facts.experience.filter((_, i) => i !== index),
+              },
+            },
+          }
+    );
   };
 
   const updateExperience = (index: number, patch: Partial<ExperienceFact>) => {
@@ -107,6 +244,19 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
     });
   };
 
+  const stackCategories: { key: keyof TechStack; label: string; placeholder: string }[] = [
+    { key: 'languages', label: 'Languages', placeholder: 'TypeScript, JavaScript, Python, SQL' },
+    { key: 'frontend', label: 'Frontend', placeholder: 'React, Next.js, ReactFlow, Vue' },
+    { key: 'backend', label: 'Backend', placeholder: 'Node.js, Express, Fastify, Django' },
+    { key: 'databases', label: 'Databases', placeholder: 'PostgreSQL, MySQL, Redis, MongoDB' },
+    { key: 'stateManagement', label: 'State Management', placeholder: 'Redux Toolkit, Zustand, TanStack Query' },
+    { key: 'styling', label: 'Styling', placeholder: 'Tailwind CSS, CSS3, SCSS, Emotion' },
+    { key: 'devTools', label: 'Developer Tools', placeholder: 'Git, Docker, Vite, Webpack, Postman' },
+    { key: 'cloud', label: 'Cloud & Hosting', placeholder: 'AWS, GCP, Vercel, Supabase' },
+    { key: 'queues', label: 'Queues & Streaming', placeholder: 'Kafka, RabbitMQ, BullMQ' },
+    { key: 'other', label: 'Other Tech / Libs', placeholder: 'Zod, D3.js, Motion' },
+  ];
+
   return (
     <div className="flex flex-col h-full bg-neutral-900 text-neutral-100 text-sm">
       {/* Header */}
@@ -119,7 +269,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
           >
             <ArrowLeft className="w-3.5 h-3.5" />
           </button>
-          <span className="font-semibold text-neutral-200 text-xs">Settings & Resume Data</span>
+          <span className="font-semibold text-neutral-200 text-xs">Settings & Master Resume</span>
         </div>
         <div className="flex items-center gap-1.5">
           <button
@@ -151,19 +301,31 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
         </div>
       </div>
 
-      {/* Tabs */}
+      {/* Navigation Tabs */}
       <div className="flex border-b border-neutral-800 text-xs px-2 bg-neutral-950/60 overflow-x-auto">
         <button
-          id="applyai-tab-profile"
-          onClick={() => setActiveTab('profile')}
+          id="applyai-tab-master"
+          onClick={() => setActiveTab('master')}
           className={`px-3 py-2 border-b-2 font-medium flex items-center gap-1.5 whitespace-nowrap transition-colors ${
-            activeTab === 'profile'
+            activeTab === 'master'
               ? 'border-neutral-200 text-neutral-100'
               : 'border-transparent text-neutral-400 hover:text-neutral-300'
           }`}
         >
-          <User className="w-3 h-3" />
-          <span>Profile</span>
+          <Code2 className="w-3 h-3" />
+          <span>Master LaTeX</span>
+        </button>
+        <button
+          id="applyai-tab-stack"
+          onClick={() => setActiveTab('stack')}
+          className={`px-3 py-2 border-b-2 font-medium flex items-center gap-1.5 whitespace-nowrap transition-colors ${
+            activeTab === 'stack'
+              ? 'border-neutral-200 text-neutral-100'
+              : 'border-transparent text-neutral-400 hover:text-neutral-300'
+          }`}
+        >
+          <Layers className="w-3 h-3" />
+          <span>Tech Stack</span>
         </button>
         <button
           id="applyai-tab-facts"
@@ -175,19 +337,19 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
           }`}
         >
           <Briefcase className="w-3 h-3" />
-          <span>Resume Facts</span>
+          <span>Experience</span>
         </button>
         <button
-          id="applyai-tab-latex"
-          onClick={() => setActiveTab('latex')}
+          id="applyai-tab-profile"
+          onClick={() => setActiveTab('profile')}
           className={`px-3 py-2 border-b-2 font-medium flex items-center gap-1.5 whitespace-nowrap transition-colors ${
-            activeTab === 'latex'
+            activeTab === 'profile'
               ? 'border-neutral-200 text-neutral-100'
               : 'border-transparent text-neutral-400 hover:text-neutral-300'
           }`}
         >
-          <Code2 className="w-3 h-3" />
-          <span>Master LaTeX</span>
+          <User className="w-3 h-3" />
+          <span>Profile</span>
         </button>
         <button
           id="applyai-tab-backend"
@@ -205,6 +367,234 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
 
       {/* Tab Panels */}
       <div className="p-3.5 space-y-3.5 flex-1 overflow-y-auto">
+        {/* Master LaTeX Tab */}
+        {activeTab === 'master' && (
+          <div className="space-y-3 text-xs">
+            <div className="p-2.5 rounded bg-neutral-950/70 border border-neutral-800 space-y-1">
+              <span className="font-semibold text-neutral-200 text-[11px] flex items-center gap-1">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                Master Resume is Source of Truth
+              </span>
+              <p className="text-[10px] text-neutral-400 leading-relaxed">
+                Paste your existing Overleaf / LaTeX template below. ApplyAI retains your formatting, macros, and commands exactly. Your master template is never overwritten.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-between gap-2">
+              <label className="text-[11px] font-medium text-neutral-300">
+                Master LaTeX Template
+              </label>
+              <div className="flex items-center gap-1.5">
+                <label
+                  htmlFor="latex-file-upload"
+                  className="cursor-pointer px-2 py-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded text-[11px] flex items-center gap-1 transition-colors"
+                >
+                  <Upload className="w-3 h-3" />
+                  <span>Upload .tex</span>
+                  <input
+                    id="latex-file-upload"
+                    type="file"
+                    accept=".tex,.txt"
+                    onChange={handleFileUpload}
+                    className="hidden"
+                  />
+                </label>
+                <button
+                  id="applyai-parse-master-resume-btn"
+                  onClick={handleParseMasterResume}
+                  disabled={isParsing}
+                  className="px-2 py-1 bg-emerald-950/80 hover:bg-emerald-900/80 text-emerald-300 border border-emerald-800/60 rounded text-[11px] flex items-center gap-1 transition-colors disabled:opacity-50"
+                  title="Extract profile, stack, and facts from this master LaTeX"
+                >
+                  {isParsing ? (
+                    <RefreshCw className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-3 h-3 text-emerald-400" />
+                  )}
+                  <span>{isParsing ? 'Parsing...' : 'Parse & Sync Profile'}</span>
+                </button>
+              </div>
+            </div>
+
+            {parseMessage && (
+              <div className="p-2 rounded bg-emerald-950/40 border border-emerald-900/50 text-emerald-300 text-[11px] flex items-center gap-1.5">
+                <Check className="w-3.5 h-3.5" />
+                <span>{parseMessage}</span>
+              </div>
+            )}
+
+            {parseError && (
+              <div className="p-2 rounded bg-red-950/40 border border-red-900/50 text-red-300 text-[11px] flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5" />
+                <span>{parseError}</span>
+              </div>
+            )}
+
+            <textarea
+              id="settings-latex-template"
+              rows={13}
+              value={data.masterResume?.latexTemplate || data.resume.latexTemplate}
+              onChange={(e) => {
+                const val = e.target.value;
+                setData((prev) =>
+                  !prev
+                    ? prev
+                    : {
+                        ...prev,
+                        masterResume: { ...prev.masterResume, latexTemplate: val },
+                        resume: { ...prev.resume, latexTemplate: val },
+                      }
+                );
+              }}
+              className="w-full bg-neutral-950 border border-neutral-800 rounded p-2.5 font-mono text-[10px] text-neutral-300 focus:outline-none focus:border-neutral-600 select-text leading-relaxed"
+            />
+          </div>
+        )}
+
+        {/* Tech Stack Tab */}
+        {activeTab === 'stack' && (
+          <div className="space-y-3 text-xs">
+            <div className="p-2.5 rounded bg-neutral-950/70 border border-neutral-800 space-y-1">
+              <span className="font-semibold text-neutral-200 text-[11px] flex items-center gap-1">
+                <Layers className="w-3.5 h-3.5 text-sky-400" />
+                Structured Tech Stack (Ground Truth)
+              </span>
+              <p className="text-[10px] text-neutral-400 leading-relaxed">
+                Extracted from your resume. When tailoring, ApplyAI compares the Job Description against these categories and emphasizes your actual tools. Technologies not listed here will never be fabricated.
+              </p>
+            </div>
+
+            <div className="space-y-2.5">
+              {stackCategories.map((cat) => {
+                const currentItems = data.stack?.[cat.key] || [];
+                return (
+                  <div key={cat.key} className="p-2 rounded bg-neutral-950 border border-neutral-800 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[11px] font-semibold text-neutral-300">
+                        {cat.label}
+                      </label>
+                      <span className="text-[10px] font-mono text-neutral-500">
+                        {currentItems.length} items
+                      </span>
+                    </div>
+
+                    <input
+                      type="text"
+                      value={currentItems.join(', ')}
+                      placeholder={cat.placeholder}
+                      onChange={(e) => updateStackCategory(cat.key, e.target.value)}
+                      className="w-full bg-neutral-900 border border-neutral-800 rounded px-2 py-1 text-[11px] font-mono text-neutral-200 focus:outline-none focus:border-neutral-600"
+                    />
+
+                    {currentItems.length > 0 && (
+                      <div className="flex flex-wrap gap-1 pt-0.5">
+                        {currentItems.map((item, idx) => (
+                          <span
+                            key={idx}
+                            className="px-1.5 py-0.5 text-[9px] font-mono bg-neutral-800 text-neutral-300 rounded border border-neutral-700/60"
+                          >
+                            {item}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Experience & Facts Tab */}
+        {activeTab === 'facts' && (
+          <div className="space-y-4 text-xs">
+            <div className="p-2.5 rounded bg-neutral-950/70 border border-neutral-800 text-[11px] text-neutral-400">
+              <span className="font-semibold text-neutral-200">Ground Truth Rule:</span> The AI is strictly forbidden from inventing experience or achievements outside these facts.
+            </div>
+
+            {/* Skills */}
+            <div>
+              <label className="block text-[11px] font-medium text-neutral-300 mb-1">
+                Technical Skills (flat list)
+              </label>
+              <textarea
+                id="settings-skills-input"
+                rows={2}
+                value={data.resume.facts.skills.join(', ')}
+                onChange={(e) => updateSkills(e.target.value)}
+                className="w-full bg-neutral-950 border border-neutral-800 rounded p-2 text-neutral-200 font-mono text-[11px] focus:outline-none focus:border-neutral-600"
+              />
+            </div>
+
+            {/* Experience */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-medium text-neutral-300">
+                  Experience ({data.resume.facts.experience.length})
+                </label>
+                <button
+                  id="settings-add-experience-btn"
+                  onClick={addExperience}
+                  className="flex items-center gap-1 text-[11px] text-neutral-300 hover:text-white"
+                >
+                  <Plus className="w-3 h-3" /> Add Role
+                </button>
+              </div>
+
+              {data.resume.facts.experience.map((exp, idx) => (
+                <div key={idx} className="p-2.5 rounded bg-neutral-950 border border-neutral-800 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <input
+                      type="text"
+                      value={exp.role}
+                      placeholder="Role title"
+                      onChange={(e) => updateExperience(idx, { role: e.target.value })}
+                      className="bg-neutral-900 border border-neutral-800 rounded px-2 py-1 text-xs font-semibold text-neutral-200 w-full"
+                    />
+                    <button
+                      onClick={() => removeExperience(idx)}
+                      className="text-neutral-500 hover:text-red-400 p-1"
+                      title="Remove experience"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      type="text"
+                      value={exp.company}
+                      placeholder="Company"
+                      onChange={(e) => updateExperience(idx, { company: e.target.value })}
+                      className="bg-neutral-900 border border-neutral-800 rounded px-2 py-1 text-[11px] text-neutral-300"
+                    />
+                    <input
+                      type="text"
+                      value={exp.dates || ''}
+                      placeholder="Dates"
+                      onChange={(e) => updateExperience(idx, { dates: e.target.value })}
+                      className="bg-neutral-900 border border-neutral-800 rounded px-2 py-1 text-[11px] text-neutral-300"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-neutral-500 mb-0.5">Bullets (one per line):</label>
+                    <textarea
+                      rows={3}
+                      value={exp.bullets.join('\n')}
+                      onChange={(e) =>
+                        updateExperience(idx, {
+                          bullets: e.target.value.split('\n').filter((b) => b.trim().length > 0),
+                        })
+                      }
+                      className="w-full bg-neutral-900 border border-neutral-800 rounded p-1.5 text-[11px] text-neutral-300 focus:outline-none"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Profile Tab */}
         {activeTab === 'profile' && (
           <div className="space-y-3 text-xs">
             <p className="text-[11px] text-neutral-400">
@@ -290,118 +680,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
           </div>
         )}
 
-        {activeTab === 'facts' && (
-          <div className="space-y-4 text-xs">
-            <div className="p-2.5 rounded bg-neutral-950/70 border border-neutral-800 text-[11px] text-neutral-400">
-              <span className="font-semibold text-neutral-200">Ground Truth Rule:</span> The AI is strictly forbidden from inventing experience or skills outside these facts.
-            </div>
-
-            {/* Skills */}
-            <div>
-              <label className="block text-[11px] font-medium text-neutral-300 mb-1">
-                Technical Skills (comma-separated)
-              </label>
-              <textarea
-                id="settings-skills-input"
-                rows={2}
-                value={data.resume.facts.skills.join(', ')}
-                onChange={(e) => updateSkills(e.target.value)}
-                className="w-full bg-neutral-950 border border-neutral-800 rounded p-2 text-neutral-200 font-mono text-[11px] focus:outline-none focus:border-neutral-600"
-              />
-            </div>
-
-            {/* Experience */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <label className="text-[11px] font-medium text-neutral-300">
-                  Experience ({data.resume.facts.experience.length})
-                </label>
-                <button
-                  id="settings-add-experience-btn"
-                  onClick={addExperience}
-                  className="flex items-center gap-1 text-[11px] text-neutral-300 hover:text-white"
-                >
-                  <Plus className="w-3 h-3" /> Add Role
-                </button>
-              </div>
-
-              {data.resume.facts.experience.map((exp, idx) => (
-                <div key={idx} className="p-2.5 rounded bg-neutral-950 border border-neutral-800 space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <input
-                      type="text"
-                      value={exp.role}
-                      placeholder="Role title"
-                      onChange={(e) => updateExperience(idx, { role: e.target.value })}
-                      className="bg-neutral-900 border border-neutral-800 rounded px-2 py-1 text-xs font-semibold text-neutral-200 w-full"
-                    />
-                    <button
-                      onClick={() => removeExperience(idx)}
-                      className="text-neutral-500 hover:text-red-400 p-1"
-                      title="Remove experience"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <input
-                      type="text"
-                      value={exp.company}
-                      placeholder="Company"
-                      onChange={(e) => updateExperience(idx, { company: e.target.value })}
-                      className="bg-neutral-900 border border-neutral-800 rounded px-2 py-1 text-[11px] text-neutral-300"
-                    />
-                    <input
-                      type="text"
-                      value={exp.dates || ''}
-                      placeholder="Dates"
-                      onChange={(e) => updateExperience(idx, { dates: e.target.value })}
-                      className="bg-neutral-900 border border-neutral-800 rounded px-2 py-1 text-[11px] text-neutral-300"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] text-neutral-500 mb-0.5">Bullets (one per line):</label>
-                    <textarea
-                      rows={3}
-                      value={exp.bullets.join('\n')}
-                      onChange={(e) =>
-                        updateExperience(idx, {
-                          bullets: e.target.value.split('\n').filter((b) => b.trim().length > 0),
-                        })
-                      }
-                      className="w-full bg-neutral-900 border border-neutral-800 rounded p-1.5 text-[11px] text-neutral-300 focus:outline-none"
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'latex' && (
-          <div className="space-y-2 text-xs">
-            <p className="text-[11px] text-neutral-400">
-              Paste your master LaTeX template from Overleaf. ApplyAI preserves formatting and commands while tailoring content.
-            </p>
-            <textarea
-              id="settings-latex-template"
-              rows={14}
-              value={data.resume.latexTemplate}
-              onChange={(e) =>
-                setData((prev) =>
-                  !prev
-                    ? prev
-                    : {
-                        ...prev,
-                        resume: { ...prev.resume, latexTemplate: e.target.value },
-                      }
-                )
-              }
-              className="w-full bg-neutral-950 border border-neutral-800 rounded p-2.5 font-mono text-[10px] text-neutral-300 focus:outline-none focus:border-neutral-600 select-text leading-relaxed"
-            />
-          </div>
-        )}
-
+        {/* Backend Tab */}
         {activeTab === 'backend' && (
           <div className="space-y-3 text-xs">
             <div>
@@ -425,17 +704,17 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
                 className="w-full bg-neutral-950 border border-neutral-800 rounded px-2.5 py-1.5 text-neutral-200 text-xs font-mono focus:outline-none focus:border-neutral-600"
               />
               <p className="text-[10px] text-neutral-500 mt-1">
-                Default: <code>http://localhost:3000</code> or your hosted backend endpoint.
+                Default: <code>http://localhost:3000</code> or your deployed endpoint.
               </p>
             </div>
 
             <div className="p-3 bg-neutral-950 border border-neutral-800 rounded-lg space-y-1.5 text-[11px] text-neutral-400">
               <div className="flex items-center gap-1.5 text-neutral-200 font-medium">
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Security Notice</span>
+                <span>Security & Storage Principle</span>
               </div>
               <p>
-                The Gemini API key is securely held inside the local backend <code>.env</code> file and is never stored in Chrome or sent to the browser extension.
+                The Gemini API key is kept exclusively on the server side in <code>process.env.GEMINI_API_KEY</code>. Master resumes and tailored resumes are processed with zero retention or training on candidate data.
               </p>
             </div>
           </div>

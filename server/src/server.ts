@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import { jdRouter } from './routes/jd.routes';
 import { resumeRouter } from './routes/resume.routes';
 import { recruiterRouter } from './routes/recruiter.routes';
+import { emailRouter } from './routes/email.routes';
 
 dotenv.config();
 
@@ -53,6 +54,7 @@ export function createServerApp() {
   app.use('/api/jd', jdRouter);
   app.use('/api/resume', resumeRouter);
   app.use('/api/recruiter', recruiterRouter);
+  app.use('/api/email', emailRouter);
 
   return app;
 }

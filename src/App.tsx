@@ -152,11 +152,15 @@ export default function App() {
             </div>
           </div>
 
-          <div className="hidden md:flex items-center gap-1.5 ml-4 pl-4 border-l border-neutral-800 text-xs">
-            <span className="text-neutral-400">Core:</span>
-            <span className="text-neutral-300 font-medium">1. Tailor Resume</span>
+          <div className="hidden lg:flex items-center gap-1.5 ml-4 pl-4 border-l border-neutral-800 text-xs">
+            <span className="text-neutral-400">Outputs:</span>
+            <span className="text-neutral-300 font-medium">1. Tailored Resume</span>
             <span className="text-neutral-600">•</span>
-            <span className="text-neutral-300 font-medium">2. Find Public Recruiter</span>
+            <span className="text-neutral-300 font-medium">2. Updated LaTeX</span>
+            <span className="text-neutral-600">•</span>
+            <span className="text-neutral-300 font-medium">3. Recruiter</span>
+            <span className="text-neutral-600">•</span>
+            <span className="text-neutral-300 font-medium">4. Outreach Email</span>
           </div>
         </div>
 

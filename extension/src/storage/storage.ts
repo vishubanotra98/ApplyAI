@@ -57,10 +57,10 @@ export const DEFAULT_LATEX_TEMPLATE = `\\documentclass[letterpaper,11pt]{article
 \\begin{document}
 
 \\begin{center}
-    \\textbf{\\Huge \\scshape Rahul Sharma} \\\\ \\vspace{1pt}
-    \\small +1 (555) 019-2834 $|$ \\href{mailto:rahul.sharma@example.com}{\\underline{rahul.sharma@example.com}} $|$ 
-    \\href{https://linkedin.com/in/rahulsharma}{\\underline{linkedin.com/in/rahulsharma}} $|$
-    \\href{https://github.com/rahulsharma}{\\underline{github.com/rahulsharma}}
+    \\textbf{\\Huge \\scshape Vishu Banotra} \\\\ \\vspace{1pt}
+    \\small +1 (555) 019-2834 $|$ \\href{mailto:banotravishu89@gmail.com}{\\underline{banotravishu89@gmail.com}} $|$ 
+    \\href{https://linkedin.com/in/vishubanotra}{\\underline{linkedin.com/in/vishubanotra}} $|$
+    \\href{https://github.com/vishubanotra}{\\underline{github.com/vishubanotra}}
 \\end{center}
 
 \\section{Technical Skills}
@@ -116,16 +116,34 @@ export const DEFAULT_LATEX_TEMPLATE = `\\documentclass[letterpaper,11pt]{article
 
 \\end{document}`;
 
+export const DEFAULT_TECH_STACK = {
+  languages: ['TypeScript', 'JavaScript', 'Python', 'SQL', 'HTML5', 'CSS3'],
+  frontend: ['React', 'Next.js', 'ReactFlow'],
+  backend: ['Node.js', 'Express'],
+  databases: ['PostgreSQL', 'SQL'],
+  stateManagement: ['Redux Toolkit'],
+  styling: ['Tailwind CSS'],
+  devTools: ['Git', 'Docker', 'Vite', 'Webpack', 'Jest', 'Postman', 'Overleaf'],
+  cloud: [],
+  queues: [],
+  other: ['Zod', 'D3.js', 'Motion', 'Lucide'],
+};
+
 export const DEFAULT_STORED_DATA: StoredData = {
   profile: {
-    firstName: 'Rahul',
-    lastName: 'Sharma',
-    email: 'rahul.sharma@example.com',
+    firstName: 'Vishu',
+    lastName: 'Banotra',
+    email: 'banotravishu89@gmail.com',
     phone: '+1 (555) 019-2834',
-    linkedin: 'https://linkedin.com/in/rahulsharma',
-    github: 'https://github.com/rahulsharma',
-    portfolio: 'https://rahulsharma.dev',
+    linkedin: 'https://linkedin.com/in/vishubanotra',
+    github: 'https://github.com/vishubanotra',
+    portfolio: 'https://vishubanotra.dev',
     location: 'San Francisco, CA',
+  },
+  stack: DEFAULT_TECH_STACK,
+  masterResume: {
+    latexTemplate: DEFAULT_LATEX_TEMPLATE,
+    lastParsedAt: 'Initial Template',
   },
   resume: {
     latexTemplate: DEFAULT_LATEX_TEMPLATE,
@@ -211,12 +229,27 @@ export async function getStoredData(): Promise<StoredData> {
       return new Promise((resolve) => {
         chrome.storage.local.get([STORAGE_KEY], (result) => {
           if (result && result[STORAGE_KEY]) {
+            const val = result[STORAGE_KEY];
+            const masterTex = val.masterResume?.latexTemplate || val.resume?.latexTemplate || DEFAULT_LATEX_TEMPLATE;
             resolve({
               ...DEFAULT_STORED_DATA,
-              ...result[STORAGE_KEY],
+              ...val,
+              stack: {
+                ...DEFAULT_TECH_STACK,
+                ...(val.stack || {}),
+              },
+              masterResume: {
+                latexTemplate: masterTex,
+                lastParsedAt: val.masterResume?.lastParsedAt,
+              },
+              resume: {
+                ...DEFAULT_STORED_DATA.resume,
+                ...(val.resume || {}),
+                latexTemplate: masterTex,
+              },
               settings: {
                 ...DEFAULT_STORED_DATA.settings,
-                ...(result[STORAGE_KEY].settings || {}),
+                ...(val.settings || {}),
               },
             });
           } else {
@@ -230,12 +263,27 @@ export async function getStoredData(): Promise<StoredData> {
     if (typeof localStorage !== 'undefined') {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
+        const val = JSON.parse(stored);
+        const masterTex = val.masterResume?.latexTemplate || val.resume?.latexTemplate || DEFAULT_LATEX_TEMPLATE;
         return {
           ...DEFAULT_STORED_DATA,
-          ...JSON.parse(stored),
+          ...val,
+          stack: {
+            ...DEFAULT_TECH_STACK,
+            ...(val.stack || {}),
+          },
+          masterResume: {
+            latexTemplate: masterTex,
+            lastParsedAt: val.masterResume?.lastParsedAt,
+          },
+          resume: {
+            ...DEFAULT_STORED_DATA.resume,
+            ...(val.resume || {}),
+            latexTemplate: masterTex,
+          },
           settings: {
             ...DEFAULT_STORED_DATA.settings,
-            ...(JSON.parse(stored).settings || {}),
+            ...(val.settings || {}),
           },
         };
       }
@@ -249,6 +297,13 @@ export async function getStoredData(): Promise<StoredData> {
 
 export async function saveStoredData(data: Partial<StoredData>): Promise<StoredData> {
   const current = await getStoredData();
+
+  const masterTemplate =
+    data.masterResume?.latexTemplate ||
+    data.resume?.latexTemplate ||
+    current.masterResume?.latexTemplate ||
+    DEFAULT_LATEX_TEMPLATE;
+
   const updated: StoredData = {
     ...current,
     ...data,
@@ -256,9 +311,19 @@ export async function saveStoredData(data: Partial<StoredData>): Promise<StoredD
       ...current.profile,
       ...(data.profile || {}),
     },
+    stack: {
+      ...current.stack,
+      ...(data.stack || {}),
+    },
+    masterResume: {
+      ...current.masterResume,
+      ...(data.masterResume || {}),
+      latexTemplate: masterTemplate,
+    },
     resume: {
       ...current.resume,
       ...(data.resume || {}),
+      latexTemplate: masterTemplate,
     },
     settings: {
       ...current.settings,

@@ -1,10 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { JobDescription, TailoredResumeResult, RecruiterSearchResponse, ExtensionActiveTab } from '../types';
+import {
+  JobDescription,
+  TailoredResumeResult,
+  RecruiterSearchResponse,
+  TailoredEmailResult,
+  ExtensionActiveTab,
+} from '../types';
 import { ApplyPanel } from '../components/ApplyPanel';
 import { ResumePanel } from '../components/ResumePanel';
 import { RecruiterPanel } from '../components/RecruiterPanel';
 import { SettingsPanel } from '../components/SettingsPanel';
-import { analyzeJdApi, tailorResumeApi, findRecruiterApi } from '../api/client';
+import { ApplicationResultsView } from '../components/ApplicationResultsView';
+import {
+  analyzeJdApi,
+  tailorResumeApi,
+  findRecruiterApi,
+  generateOutreachEmailApi,
+} from '../api/client';
 import { getStoredData } from '../storage/storage';
 
 export const SidePanel: React.FC = () => {
@@ -22,6 +34,11 @@ export const SidePanel: React.FC = () => {
   const [recruiterResult, setRecruiterResult] = useState<RecruiterSearchResponse | null>(null);
   const [isSearchingRecruiters, setIsSearchingRecruiters] = useState(false);
   const [recruiterError, setRecruiterError] = useState<string | null>(null);
+
+  // Outreach Email State
+  const [emailResult, setEmailResult] = useState<TailoredEmailResult | null>(null);
+  const [isGeneratingEmail, setIsGeneratingEmail] = useState(false);
+  const [emailError, setEmailError] = useState<string | null>(null);
 
   // When sidepanel opens, try to extract from current active tab
   useEffect(() => {
@@ -88,7 +105,7 @@ export const SidePanel: React.FC = () => {
 
   const handleTailorResume = async () => {
     if (!job) return;
-    setActiveTab('resume');
+    setActiveTab('results');
     setIsTailoring(true);
     setTailorError(null);
     try {
@@ -96,9 +113,15 @@ export const SidePanel: React.FC = () => {
       const result = await tailorResumeApi({
         job,
         resumeFacts: stored.resume.facts,
-        latexTemplate: stored.resume.latexTemplate,
+        latexTemplate: stored.masterResume?.latexTemplate || stored.resume.latexTemplate,
+        stack: stored.stack,
       });
       setTailorResult(result);
+
+      // If email hasn't been generated yet, automatically generate outreach email
+      if (!emailResult && !isGeneratingEmail) {
+        handleGenerateEmail(result);
+      }
     } catch (err) {
       setTailorError(err instanceof Error ? err.message : 'Resume tailoring failed.');
     } finally {
@@ -108,7 +131,7 @@ export const SidePanel: React.FC = () => {
 
   const handleFindRecruiter = async () => {
     if (!job) return;
-    setActiveTab('recruiter');
+    setActiveTab('results');
     setIsSearchingRecruiters(true);
     setRecruiterError(null);
     try {
@@ -126,6 +149,44 @@ export const SidePanel: React.FC = () => {
     }
   };
 
+  const handleGenerateEmail = async (overrideTailor?: TailoredResumeResult) => {
+    if (!job) return;
+    setIsGeneratingEmail(true);
+    setEmailError(null);
+    try {
+      const stored = await getStoredData();
+      const result = await generateOutreachEmailApi({
+        job,
+        resumeFacts: stored.resume.facts,
+        stack: stored.stack,
+        profile: stored.profile,
+        recruiter: recruiterResult?.recruiters?.[0] ? {
+          name: recruiterResult.recruiters[0].name,
+          title: recruiterResult.recruiters[0].title,
+          company: recruiterResult.recruiters[0].company || job.company,
+        } : {
+          company: job.company,
+        },
+      });
+      setEmailResult(result);
+    } catch (err) {
+      setEmailError(err instanceof Error ? err.message : 'Failed to generate outreach email.');
+    } finally {
+      setIsGeneratingEmail(false);
+    }
+  };
+
+  const handleRunAll = async () => {
+    if (!job) return;
+    setActiveTab('results');
+    // Run both pipeline steps
+    await Promise.allSettled([
+      handleTailorResume(),
+      handleFindRecruiter(),
+    ]);
+    await handleGenerateEmail();
+  };
+
   return (
     <div className="w-full h-screen bg-neutral-900 text-neutral-100 flex flex-col font-sans select-none">
       {activeTab === 'apply' && (
@@ -140,12 +201,37 @@ export const SidePanel: React.FC = () => {
         />
       )}
 
+      {activeTab === 'results' && job && (
+        <ApplicationResultsView
+          job={job}
+          tailorResult={tailorResult}
+          isTailoring={isTailoring}
+          tailorError={tailorError}
+          onTailorResume={handleTailorResume}
+          recruiterResult={recruiterResult}
+          isSearchingRecruiter={isSearchingRecruiters}
+          recruiterError={recruiterError}
+          onFindRecruiter={handleFindRecruiter}
+          emailResult={emailResult}
+          isGeneratingEmail={isGeneratingEmail}
+          emailError={emailError}
+          onGenerateEmail={() => handleGenerateEmail()}
+          onRunAll={handleRunAll}
+          onBack={() => setActiveTab('apply')}
+          onOpenSettings={() => setActiveTab('settings')}
+        />
+      )}
+
       {activeTab === 'resume' && job && (
         <ResumePanel
           job={job}
           tailorResult={tailorResult}
           isLoading={isTailoring}
           error={tailorError}
+          emailResult={emailResult}
+          isGeneratingEmail={isGeneratingEmail}
+          emailError={emailError}
+          onGenerateEmail={() => handleGenerateEmail()}
           onBack={() => setActiveTab('apply')}
           onRetry={handleTailorResume}
         />
@@ -163,7 +249,7 @@ export const SidePanel: React.FC = () => {
       )}
 
       {activeTab === 'settings' && (
-        <SettingsPanel onBack={() => setActiveTab('apply')} />
+        <SettingsPanel onBack={() => setActiveTab(job ? 'results' : 'apply')} />
       )}
     </div>
   );
