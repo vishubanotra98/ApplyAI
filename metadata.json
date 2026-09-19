@@ -1,0 +1,6 @@
+{
+  "name": "ApplyAI",
+  "description": "Personal Chrome extension & AI backend to tailor resumes and find verified recruiter contact info.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
