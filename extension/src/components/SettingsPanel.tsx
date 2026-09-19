@@ -19,7 +19,8 @@ import {
 } from 'lucide-react';
 import { StoredData, ExperienceFact, ProjectFact, TechStack } from '../types';
 import { getStoredData, saveStoredData, resetToDefaults } from '../storage/storage';
-import { parseMasterResumeApi } from '../api/client';
+import { parseMasterResumeApi, checkBackendHealth } from '../api/client';
+import { DEFAULT_BACKEND_URL, sanitizeBackendUrl } from '../config';
 
 interface SettingsPanelProps {
   onBack: () => void;
@@ -34,6 +35,14 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
   const [parseMessage, setParseMessage] = useState<string | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
 
+  // Backend Health Test State
+  const [isTestingBackend, setIsTestingBackend] = useState(false);
+  const [backendTestStatus, setBackendTestStatus] = useState<{
+    success: boolean;
+    message: string;
+    details?: string;
+  } | null>(null);
+
   useEffect(() => {
     getStoredData().then((loaded) => setData(loaded));
   }, []);
@@ -46,11 +55,50 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
     );
   }
 
+  const handleTestBackend = async () => {
+    setIsTestingBackend(true);
+    setBackendTestStatus(null);
+    try {
+      // First save the current input URL so the client uses the updated URL
+      const cleanUrl = sanitizeBackendUrl(data.settings.backendUrl);
+      const updated = await saveStoredData({
+        ...data,
+        settings: {
+          ...data.settings,
+          backendUrl: cleanUrl,
+        },
+      });
+      setData(updated);
+
+      const health = await checkBackendHealth();
+      setBackendTestStatus({
+        success: true,
+        message: `Connected successfully (${health.service || 'Backend OK'})`,
+        details: `Model: ${health.model} | API Key: ${health.hasApiKey ? 'Configured' : 'Missing'}`,
+      });
+    } catch (err) {
+      setBackendTestStatus({
+        success: false,
+        message: err instanceof Error ? err.message : 'Connection failed',
+      });
+    } finally {
+      setIsTestingBackend(false);
+    }
+  };
+
   const handleSave = async () => {
     setIsSaving(true);
     setSaveSuccess(false);
     try {
-      await saveStoredData(data);
+      const cleanUrl = sanitizeBackendUrl(data.settings.backendUrl);
+      const updated = await saveStoredData({
+        ...data,
+        settings: {
+          ...data.settings,
+          backendUrl: cleanUrl,
+        },
+      });
+      setData(updated);
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2500);
     } catch (err) {
@@ -682,31 +730,89 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
 
         {/* Backend Tab */}
         {activeTab === 'backend' && (
-          <div className="space-y-3 text-xs">
+          <div className="space-y-3.5 text-xs">
             <div>
               <label className="block text-[11px] font-medium text-neutral-300 mb-1">
                 Backend Server URL
               </label>
-              <input
-                id="settings-backend-url"
-                type="text"
-                value={data.settings.backendUrl}
-                onChange={(e) =>
-                  setData((prev) =>
-                    !prev
-                      ? prev
-                      : {
-                          ...prev,
-                          settings: { ...prev.settings, backendUrl: e.target.value },
-                        }
-                  )
-                }
-                className="w-full bg-neutral-950 border border-neutral-800 rounded px-2.5 py-1.5 text-neutral-200 text-xs font-mono focus:outline-none focus:border-neutral-600"
-              />
+              <div className="flex gap-2">
+                <input
+                  id="settings-backend-url"
+                  type="text"
+                  value={data.settings.backendUrl}
+                  onChange={(e) =>
+                    setData((prev) =>
+                      !prev
+                        ? prev
+                        : {
+                            ...prev,
+                            settings: { ...prev.settings, backendUrl: e.target.value },
+                          }
+                    )
+                  }
+                  className="flex-1 bg-neutral-950 border border-neutral-800 rounded px-2.5 py-1.5 text-neutral-200 text-xs font-mono focus:outline-none focus:border-neutral-600"
+                  placeholder={DEFAULT_BACKEND_URL}
+                />
+                <button
+                  type="button"
+                  id="btn-reset-backend-url"
+                  onClick={() =>
+                    setData((prev) =>
+                      !prev
+                        ? prev
+                        : {
+                            ...prev,
+                            settings: { ...prev.settings, backendUrl: DEFAULT_BACKEND_URL },
+                          }
+                    )
+                  }
+                  title="Reset to default local URL"
+                  className="px-2 py-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded text-[11px] transition-colors whitespace-nowrap"
+                >
+                  Reset Default
+                </button>
+              </div>
               <p className="text-[10px] text-neutral-500 mt-1">
-                Default: <code>http://localhost:3000</code> or your deployed endpoint.
+                Default: <code>{DEFAULT_BACKEND_URL}</code>. Never uses <code>chrome-extension://</code>.
               </p>
             </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                id="btn-test-backend-connection"
+                onClick={handleTestBackend}
+                disabled={isTestingBackend}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-50 text-neutral-200 rounded font-medium text-xs transition-colors"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isTestingBackend ? 'animate-spin' : ''}`} />
+                <span>{isTestingBackend ? 'Testing Connection...' : 'Test Backend Connection'}</span>
+              </button>
+            </div>
+
+            {backendTestStatus && (
+              <div
+                className={`p-2.5 rounded border text-[11px] space-y-1 ${
+                  backendTestStatus.success
+                    ? 'bg-emerald-950/40 border-emerald-800/60 text-emerald-300'
+                    : 'bg-rose-950/40 border-rose-800/60 text-rose-300'
+                }`}
+              >
+                <div className="flex items-center gap-1.5 font-medium">
+                  {backendTestStatus.success ? (
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  ) : (
+                    <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                  )}
+                  <span>{backendTestStatus.message}</span>
+                </div>
+                {backendTestStatus.details && (
+                  <p className="text-[10px] text-neutral-400 font-mono pl-5">
+                    {backendTestStatus.details}
+                  </p>
+                )}
+              </div>
+            )}
 
             <div className="p-3 bg-neutral-950 border border-neutral-800 rounded-lg space-y-1.5 text-[11px] text-neutral-400">
               <div className="flex items-center gap-1.5 text-neutral-200 font-medium">
@@ -714,7 +820,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
                 <span>Security & Storage Principle</span>
               </div>
               <p>
-                The Gemini API key is kept exclusively on the server side in <code>process.env.GEMINI_API_KEY</code>. Master resumes and tailored resumes are processed with zero retention or training on candidate data.
+                All extension requests resolve to <code>{DEFAULT_BACKEND_URL}/api/...</code> or your configured backend. The Gemini API key remains secured on the server side in <code>process.env.GEMINI_API_KEY</code>.
               </p>
             </div>
           </div>

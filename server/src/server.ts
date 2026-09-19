@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import { getModelName } from './services/gemini.service';
 import { jdRouter } from './routes/jd.routes';
 import { resumeRouter } from './routes/resume.routes';
 import { recruiterRouter } from './routes/recruiter.routes';
@@ -44,7 +45,7 @@ export function createServerApp() {
       status: 'ok',
       service: 'ApplyAI Backend',
       version: '1.0.0',
-      model: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
+      model: getModelName(),
       hasApiKey: Boolean(process.env.GEMINI_API_KEY),
       timestamp: new Date().toISOString(),
     });

@@ -1,4 +1,5 @@
 import { StoredData } from '../types';
+import { DEFAULT_BACKEND_URL, sanitizeBackendUrl } from '../config';
 
 export const DEFAULT_LATEX_TEMPLATE = `\\documentclass[letterpaper,11pt]{article}
 \\usepackage{latexsym}
@@ -211,7 +212,7 @@ export const DEFAULT_STORED_DATA: StoredData = {
     },
   },
   settings: {
-    backendUrl: typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000',
+    backendUrl: DEFAULT_BACKEND_URL,
     geminiModel: 'gemini-3.8-flash',
   },
 };
@@ -250,6 +251,7 @@ export async function getStoredData(): Promise<StoredData> {
               settings: {
                 ...DEFAULT_STORED_DATA.settings,
                 ...(val.settings || {}),
+                backendUrl: sanitizeBackendUrl(val.settings?.backendUrl),
               },
             });
           } else {
@@ -284,6 +286,7 @@ export async function getStoredData(): Promise<StoredData> {
           settings: {
             ...DEFAULT_STORED_DATA.settings,
             ...(val.settings || {}),
+            backendUrl: sanitizeBackendUrl(val.settings?.backendUrl),
           },
         };
       }
@@ -303,6 +306,10 @@ export async function saveStoredData(data: Partial<StoredData>): Promise<StoredD
     data.resume?.latexTemplate ||
     current.masterResume?.latexTemplate ||
     DEFAULT_LATEX_TEMPLATE;
+
+  const rawBackendUrl = data.settings?.backendUrl !== undefined
+    ? data.settings.backendUrl
+    : current.settings.backendUrl;
 
   const updated: StoredData = {
     ...current,
@@ -328,6 +335,7 @@ export async function saveStoredData(data: Partial<StoredData>): Promise<StoredD
     settings: {
       ...current.settings,
       ...(data.settings || {}),
+      backendUrl: sanitizeBackendUrl(rawBackendUrl),
     },
   };
 

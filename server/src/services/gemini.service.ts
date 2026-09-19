@@ -24,7 +24,11 @@ export function getGeminiClient(): GoogleGenAI {
 }
 
 export function getModelName(): string {
-  return process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+  const envModel = process.env.GEMINI_MODEL;
+  if (envModel && (envModel.startsWith('gemini-') || envModel.startsWith('veo-') || envModel.startsWith('lyria-'))) {
+    return envModel;
+  }
+  return 'gemini-3.8-flash';
 }
 
 /**

@@ -1,4 +1,5 @@
 import { getStoredData } from '../storage/storage';
+import { sanitizeBackendUrl, DEFAULT_BACKEND_URL } from '../config';
 import {
   JobDescription,
   RecruiterSearchResponse,
@@ -22,11 +23,9 @@ export class ApiError extends Error {
   }
 }
 
-async function getBaseUrl(): Promise<string> {
+export async function getBaseUrl(): Promise<string> {
   const data = await getStoredData();
-  const url = data.settings.backendUrl || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000');
-  // Strip trailing slash
-  return url.replace(/\/+$/, '');
+  return sanitizeBackendUrl(data.settings?.backendUrl);
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
