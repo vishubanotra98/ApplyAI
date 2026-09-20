@@ -1,43 +1,78 @@
-import { Type } from '@google/genai';
-import { execFile } from 'child_process';
-import crypto from 'crypto';
-import fs from 'fs';
-import os from 'os';
-import path from 'path';
-import { promisify } from 'util';
-import { getGeminiClient, getModelName, extractJsonFromText } from './gemini.service';
-import { RESUME_SYSTEM_INSTRUCTION, buildResumeTailorPrompt } from '../prompts/resume.prompt';
-import { PARSE_RESUME_SYSTEM_INSTRUCTION, buildParseResumePrompt } from '../prompts/parseResume.prompt';
-import { extractTextFromLatex } from '../utils/latexParser';
+import { Type } from "@google/genai";
+
 import {
-  TailorResumeRequest,
-  TailorResumeResponse,
-  TailorResumeResponseSchema,
+  getGeminiClient,
+  getModelName,
+  extractJsonFromText,
+} from "./gemini.service.js";
+
+import {
+  RESUME_SYSTEM_INSTRUCTION,
+  buildResumeTailorPrompt,
+} from "../prompts/resume.prompt.js";
+
+import {
+  GeminiTailorResumeResponseSchema,
   ParseMasterResumeRequest,
   ParseMasterResumeResponse,
   ParseMasterResumeResponseSchema,
-} from '../schemas/resume.schema';
-import { AppError } from '../utils/errors';
+  TailorResumeRequest,
+  TailorResumeResponse,
+  TailorResumeResponseSchema,
+} from "../schemas/resume.schema.js";
+
+import { AppError } from "../utils/errors.js";
+import { applyEditPlan } from "../utils/latexEditor.js";
+
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import crypto from "node:crypto";
+
+import { extractTextFromLatex } from "../utils/latexParser.js";
+import { existsSync } from "node:fs";
 
 const execFileAsync = promisify(execFile);
 
-export async function tailorResume(data: TailorResumeRequest): Promise<TailorResumeResponse> {
+const MAX_LATEX_LENGTH = 40_000;
+
+export async function tailorResume(
+  data: TailorResumeRequest,
+): Promise<TailorResumeResponse> {
   const { job, resumeFacts, latexTemplate, stack } = data;
 
   if (!latexTemplate || latexTemplate.trim().length < 10) {
-    throw new AppError(400, 'A valid master LaTeX resume template is required.');
+    throw new AppError(
+      400,
+      "A valid master LaTeX resume template is required.",
+    );
   }
 
-  const ai = getGeminiClient();
-  const model = getModelName();
+  if (latexTemplate.length > MAX_LATEX_LENGTH) {
+    throw new AppError(
+      400,
+      "The LaTeX resume template is too large to process.",
+    );
+  }
+
+  if (!job) {
+    throw new AppError(400, "A valid job description is required.");
+  }
+
+  if (!resumeFacts) {
+    throw new AppError(400, "Resume facts are required for tailoring.");
+  }
 
   try {
-    const response = await ai.models.generateContent({
-      model,
+    const response = await getGeminiClient().models.generateContent({
+      model: getModelName(),
       contents: buildResumeTailorPrompt(job, resumeFacts, latexTemplate, stack),
       config: {
         systemInstruction: RESUME_SYSTEM_INSTRUCTION,
-        responseMimeType: 'application/json',
+        temperature: 0.1,
+        responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
           properties: {
@@ -47,360 +82,540 @@ export async function tailorResume(data: TailorResumeRequest): Promise<TailorRes
                 matchedSkills: {
                   type: Type.ARRAY,
                   items: { type: Type.STRING },
-                  description: 'Skills explicitly present in candidate facts that match the job description',
                 },
                 matchedTechnologies: {
                   type: Type.ARRAY,
                   items: { type: Type.STRING },
-                  description: 'Candidate tech stack items that align with JD requirements',
                 },
                 missingTechnologies: {
                   type: Type.ARRAY,
                   items: { type: Type.STRING },
-                  description: 'Technologies required or mentioned in JD that candidate does NOT have; strictly omitted from resume',
                 },
                 relevantExperience: {
                   type: Type.ARRAY,
                   items: { type: Type.STRING },
-                  description: 'Candidate work experiences most aligned to emphasize',
                 },
                 relevantProjects: {
                   type: Type.ARRAY,
                   items: { type: Type.STRING },
-                  description: 'Candidate projects most aligned to emphasize',
                 },
               },
               required: [
-                'matchedSkills',
-                'matchedTechnologies',
-                'missingTechnologies',
-                'relevantExperience',
-                'relevantProjects',
+                "matchedSkills",
+                "matchedTechnologies",
+                "missingTechnologies",
+                "relevantExperience",
+                "relevantProjects",
               ],
             },
-            updatedLatex: {
-              type: Type.STRING,
-              description: 'The tailored compilable LaTeX code preserving all document macros, commands, and layout',
-            },
-            changesSummary: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING },
-              description: 'Concise summary bullets of changes made based on existing facts (e.g. Emphasized React and TypeScript, Highlighted ReactFlow, Selected Subtend project, Reworded 2 bullets)',
+            editPlan: {
+              type: Type.OBJECT,
+              properties: {
+                rewrites: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      section: { type: Type.STRING },
+                      originalText: { type: Type.STRING },
+                      replacementText: { type: Type.STRING },
+                      reason: { type: Type.STRING },
+                    },
+                    required: [
+                      "section",
+                      "originalText",
+                      "replacementText",
+                      "reason",
+                    ],
+                  },
+                },
+                reorders: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      section: { type: Type.STRING },
+                      item: { type: Type.STRING },
+                      targetPosition: { type: Type.INTEGER },
+                      reason: { type: Type.STRING },
+                    },
+                    required: ["section", "item", "targetPosition", "reason"],
+                  },
+                },
+                emphasis: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      section: { type: Type.STRING },
+                      targetText: { type: Type.STRING },
+                      reason: { type: Type.STRING },
+                    },
+                    required: ["section", "targetText", "reason"],
+                  },
+                },
+                prunes: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      section: { type: Type.STRING },
+                      targetText: { type: Type.STRING },
+                      reason: { type: Type.STRING },
+                    },
+                    required: ["section", "targetText", "reason"],
+                  },
+                },
+              },
+              required: ["rewrites", "reorders", "emphasis", "prunes"],
             },
             changes: {
               type: Type.ARRAY,
               items: {
                 type: Type.OBJECT,
                 properties: {
-                  section: {
-                    type: Type.STRING,
-                    description: 'Section or company/project modified (e.g. Vodex, Technical Skills, Projects)',
-                  },
+                  section: { type: Type.STRING },
                   type: {
                     type: Type.STRING,
-                    enum: ['rewrite', 'reorder', 'emphasis', 'prune'],
-                    description: 'Classification of the modification',
+                    enum: ["rewrite", "reorder", "emphasis", "prune"],
                   },
-                  description: {
-                    type: Type.STRING,
-                    description: 'Detailed description explaining how existing facts were emphasized for this JD',
-                  },
+                  description: { type: Type.STRING },
                 },
-                required: ['section', 'type', 'description'],
+                required: ["section", "type", "description"],
               },
             },
           },
-          required: ['resumeAnalysis', 'updatedLatex', 'changes'],
+          required: ["resumeAnalysis", "editPlan", "changes"],
         },
       },
     });
 
-    const rawText = response.text;
+    const rawText = response.text?.trim();
+
     if (!rawText) {
-      throw new AppError(500, 'Failed to generate tailored resume from model.');
+      throw new AppError(
+        502,
+        "The AI model returned an empty resume analysis.",
+      );
     }
 
-    const parsed = JSON.parse(extractJsonFromText(rawText));
+    let parsed: unknown;
 
-    // Strip accidental code block fences if present inside updatedLatex string
-    if (typeof parsed.updatedLatex === 'string') {
-      parsed.updatedLatex = parsed.updatedLatex.replace(/^```latex\s*/i, '').replace(/```$/i, '').trim();
+    try {
+      parsed = JSON.parse(extractJsonFromText(rawText));
+    } catch (error) {
+      console.error("[ApplyAI] Invalid resume tailoring JSON:", error);
+
+      throw new AppError(
+        502,
+        "The AI returned an invalid resume tailoring response.",
+        error instanceof Error ? error.message : String(error),
+        { cause: error },
+      );
     }
 
-    // Format concise change summary bullets
-    const rawChanges = parsed.changes || [];
-    const derivedSummary: string[] = (parsed.changesSummary && parsed.changesSummary.length > 0)
-      ? parsed.changesSummary
-      : rawChanges.map((c: any) => c.description || c.change || `${c.type}: ${c.section}`).slice(0, 6);
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
+      throw new AppError(
+        502,
+        "The AI returned an invalid resume tailoring response.",
+      );
+    }
 
-    // Attach original job description to the returned response object
-    const finalPayload = {
+    const validationResult = GeminiTailorResumeResponseSchema.safeParse(parsed);
+
+    if (!validationResult.success) {
+      console.error(
+        "[ApplyAI] Invalid resume tailoring structure:",
+        validationResult.error.flatten(),
+      );
+
+      throw new AppError(
+        502,
+        "The AI returned an invalid resume tailoring structure.",
+      );
+    }
+    const validated = validationResult.data;
+
+    const updatedLatex = applyEditPlan(latexTemplate, validated.editPlan);
+
+    if (!updatedLatex || updatedLatex.trim().length < 10) {
+      throw new AppError(
+        500,
+        "The generated resume was empty after applying the edit plan.",
+      );
+    }
+
+    // Validate that the original LaTeX document structure was preserved.
+    if (
+      latexTemplate.includes("\\documentclass") &&
+      !updatedLatex.includes("\\documentclass")
+    ) {
+      throw new AppError(
+        500,
+        "The generated resume lost the original LaTeX document structure.",
+      );
+    }
+
+    if (
+      latexTemplate.includes("\\begin{document}") &&
+      !updatedLatex.includes("\\begin{document}")
+    ) {
+      throw new AppError(
+        500,
+        "The generated resume lost the document body structure.",
+      );
+    }
+
+    return {
       job,
-      resumeAnalysis: parsed.resumeAnalysis || {
-        matchedSkills: [],
-        matchedTechnologies: [],
-        missingTechnologies: [],
-        relevantExperience: [],
-        relevantProjects: [],
-      },
-      updatedLatex: parsed.updatedLatex,
-      changes: rawChanges,
-      changesSummary: derivedSummary,
+      resumeAnalysis: validated.resumeAnalysis,
+      editPlan: validated.editPlan,
+      changes: validated.changes,
+      changesSummary: [],
+      updatedLatex,
     };
-
-    const validated = TailorResumeResponseSchema.parse(finalPayload);
-
-    // Sanity check: Ensure LaTeX has structural markers
-    const hasDocClass =
-      validated.updatedLatex.includes('\\documentclass') ||
-      validated.updatedLatex.includes('\\begin{document}');
-    if (!hasDocClass && latexTemplate.includes('\\documentclass')) {
-      throw new AppError(500, 'Generated LaTeX was missing core document structure.');
+  } catch (error) {
+    if (error instanceof AppError) {
+      throw error;
     }
 
-    return validated;
-  } catch (error) {
-    if (error instanceof AppError) throw error;
-    const msg = error instanceof Error ? error.message : String(error);
-    throw new AppError(500, `Resume tailoring failed: ${msg}`);
+    const message = error instanceof Error ? error.message : String(error);
+
+    console.error("[ApplyAI] Resume tailoring failed:", error);
+
+    throw new AppError(
+      502,
+      "Resume tailoring failed. Please try again later.",
+      message,
+      { cause: error },
+    );
   }
 }
 
-/**
- * Parses a Master LaTeX resume once into a structured Resume Profile,
- * extracting the categorized tech stack, ground truth experience, and contact profile.
- * Preprocesses the LaTeX to remove formatting macros and comments, ensuring
- * the LLM receives only textual resume content and responds ONLY with structured profile data.
- */
+export async function compileLatexToPdf(latex: string): Promise<Buffer> {
+  if (!latex || latex.trim().length < 10) {
+    throw new AppError(400, "Valid LaTeX content is required.");
+  }
+
+  const tempDirectory = path.join(
+    os.tmpdir(),
+    `applyai-resume-${crypto.randomUUID()}`,
+  );
+
+  await mkdir(tempDirectory, { recursive: true });
+
+  const texFilePath = path.join(tempDirectory, "resume.tex");
+  const pdfFilePath = path.join(tempDirectory, "resume.pdf");
+
+  try {
+    await execFileAsync(
+      "pdflatex",
+      [
+        "-interaction=nonstopmode",
+        "-halt-on-error",
+        "-file-line-error",
+        "-output-directory",
+        tempDirectory,
+        texFilePath,
+      ],
+      {
+        timeout: 30_000,
+        cwd: tempDirectory,
+      },
+    );
+
+    return await readFile(pdfFilePath);
+  } catch (error: any) {
+    const logFilePath = path.join(tempDirectory, "resume.log");
+
+    let latexLog = "";
+
+    if (existsSync(logFilePath)) {
+      latexLog = await readFile(logFilePath, "utf8");
+    }
+
+    console.error("[ApplyAI] LaTeX compilation failed:", {
+      message: error?.message,
+      stdout: error?.stdout,
+      stderr: error?.stderr,
+      latexLog,
+    });
+
+    throw new AppError(
+      500,
+      "Failed to compile LaTeX into a PDF.",
+      error?.stderr || error?.stdout || latexLog || error?.message,
+      {
+        cause: error,
+      },
+    );
+  }
+}
+
 export async function parseMasterResume(
-  data: ParseMasterResumeRequest
+  data: ParseMasterResumeRequest,
 ): Promise<ParseMasterResumeResponse> {
   const { latexTemplate } = data;
 
   if (!latexTemplate || latexTemplate.trim().length < 10) {
-    throw new AppError(400, 'Master LaTeX resume template is required to parse.');
+    throw new AppError(400, "A valid LaTeX resume is required.");
   }
 
-  // 1. Locally extract clean text from the LaTeX template to reduce token overhead and strip LaTeX commands
-  const cleanResumeText = extractTextFromLatex(latexTemplate);
-  const promptContent = cleanResumeText && cleanResumeText.length > 50 ? cleanResumeText : latexTemplate;
+  if (latexTemplate.length > MAX_LATEX_LENGTH) {
+    throw new AppError(400, "The LaTeX resume is too large to process.");
+  }
 
-  const ai = getGeminiClient();
-  const model = getModelName();
+  const extractedText = extractTextFromLatex(latexTemplate);
 
-  try {
-    const response = await ai.models.generateContent({
-      model,
-      contents: buildParseResumePrompt(promptContent),
-      config: {
-        systemInstruction: PARSE_RESUME_SYSTEM_INSTRUCTION,
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            profile: {
+  if (!extractedText.trim()) {
+    throw new AppError(
+      400,
+      "Could not extract readable text from the LaTeX resume.",
+    );
+  }
+
+  const techStackSchema = {
+    type: Type.OBJECT,
+    properties: {
+      languages: {
+        type: Type.ARRAY,
+        items: { type: Type.STRING },
+      },
+      frontend: {
+        type: Type.ARRAY,
+        items: { type: Type.STRING },
+      },
+      backend: {
+        type: Type.ARRAY,
+        items: { type: Type.STRING },
+      },
+      databases: {
+        type: Type.ARRAY,
+        items: { type: Type.STRING },
+      },
+      stateManagement: {
+        type: Type.ARRAY,
+        items: { type: Type.STRING },
+      },
+      styling: {
+        type: Type.ARRAY,
+        items: { type: Type.STRING },
+      },
+      devTools: {
+        type: Type.ARRAY,
+        items: { type: Type.STRING },
+      },
+      cloud: {
+        type: Type.ARRAY,
+        items: { type: Type.STRING },
+      },
+      queues: {
+        type: Type.ARRAY,
+        items: { type: Type.STRING },
+      },
+      other: {
+        type: Type.ARRAY,
+        items: { type: Type.STRING },
+      },
+    },
+    required: [
+      "languages",
+      "frontend",
+      "backend",
+      "databases",
+      "stateManagement",
+      "styling",
+      "devTools",
+      "cloud",
+      "queues",
+      "other",
+    ],
+  };
+
+  const responseSchema = {
+    type: Type.OBJECT,
+    properties: {
+      profile: {
+        type: Type.OBJECT,
+        properties: {
+          firstName: { type: Type.STRING },
+          lastName: { type: Type.STRING },
+          email: { type: Type.STRING },
+          phone: { type: Type.STRING },
+          linkedin: { type: Type.STRING },
+          github: { type: Type.STRING },
+          portfolio: { type: Type.STRING },
+          location: { type: Type.STRING },
+        },
+        required: ["firstName", "lastName", "email"],
+      },
+
+      stack: techStackSchema,
+
+      facts: {
+        type: Type.OBJECT,
+        properties: {
+          summary: { type: Type.STRING },
+
+          skills: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
+          },
+
+          stack: techStackSchema,
+
+          experience: {
+            type: Type.ARRAY,
+            items: {
               type: Type.OBJECT,
               properties: {
-                firstName: { type: Type.STRING },
-                lastName: { type: Type.STRING },
-                email: { type: Type.STRING },
-                phone: { type: Type.STRING, nullable: true },
-                linkedin: { type: Type.STRING, nullable: true },
-                github: { type: Type.STRING, nullable: true },
-                portfolio: { type: Type.STRING, nullable: true },
-                location: { type: Type.STRING, nullable: true },
-              },
-              required: ['firstName', 'lastName', 'email'],
-            },
-            stack: {
-              type: Type.OBJECT,
-              properties: {
-                languages: { type: Type.ARRAY, items: { type: Type.STRING } },
-                frontend: { type: Type.ARRAY, items: { type: Type.STRING } },
-                backend: { type: Type.ARRAY, items: { type: Type.STRING } },
-                databases: { type: Type.ARRAY, items: { type: Type.STRING } },
-                stateManagement: { type: Type.ARRAY, items: { type: Type.STRING } },
-                styling: { type: Type.ARRAY, items: { type: Type.STRING } },
-                devTools: { type: Type.ARRAY, items: { type: Type.STRING } },
-                cloud: { type: Type.ARRAY, items: { type: Type.STRING } },
-                queues: { type: Type.ARRAY, items: { type: Type.STRING } },
-                other: { type: Type.ARRAY, items: { type: Type.STRING } },
-              },
-              required: [
-                'languages',
-                'frontend',
-                'backend',
-                'databases',
-                'stateManagement',
-                'styling',
-                'devTools',
-                'cloud',
-                'queues',
-                'other',
-              ],
-            },
-            facts: {
-              type: Type.OBJECT,
-              properties: {
-                summary: { type: Type.STRING, nullable: true },
-                skills: { type: Type.ARRAY, items: { type: Type.STRING } },
-                experience: {
+                company: { type: Type.STRING },
+                role: { type: Type.STRING },
+                dates: { type: Type.STRING },
+                bullets: {
                   type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      company: { type: Type.STRING },
-                      role: { type: Type.STRING },
-                      dates: { type: Type.STRING, nullable: true },
-                      bullets: { type: Type.ARRAY, items: { type: Type.STRING } },
-                      technologies: { type: Type.ARRAY, items: { type: Type.STRING } },
-                    },
-                    required: ['company', 'role', 'bullets'],
-                  },
+                  items: { type: Type.STRING },
                 },
-                projects: {
+                technologies: {
                   type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      name: { type: Type.STRING },
-                      description: { type: Type.STRING },
-                      technologies: { type: Type.ARRAY, items: { type: Type.STRING } },
-                      bullets: { type: Type.ARRAY, items: { type: Type.STRING } },
-                      url: { type: Type.STRING, nullable: true },
-                    },
-                    required: ['name', 'description', 'technologies', 'bullets'],
-                  },
-                },
-                education: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      institution: { type: Type.STRING },
-                      degree: { type: Type.STRING },
-                      dates: { type: Type.STRING, nullable: true },
-                    },
-                    required: ['institution', 'degree'],
-                  },
+                  items: { type: Type.STRING },
                 },
               },
-              required: ['skills', 'experience', 'projects'],
+              required: ["company", "role", "bullets"],
             },
           },
-          required: ['profile', 'stack', 'facts'],
+
+          projects: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                name: { type: Type.STRING },
+                description: { type: Type.STRING },
+                technologies: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                },
+                bullets: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                },
+                url: { type: Type.STRING },
+              },
+              required: ["name", "description", "technologies", "bullets"],
+            },
+          },
+
+          education: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                institution: { type: Type.STRING },
+                degree: { type: Type.STRING },
+                dates: { type: Type.STRING },
+              },
+              required: ["institution", "degree"],
+            },
+          },
         },
+        required: ["skills", "experience", "projects", "education"],
+      },
+    },
+    required: ["profile", "stack", "facts"],
+  };
+
+  try {
+    const response = await getGeminiClient().models.generateContent({
+      model: getModelName(),
+
+      contents: `
+Extract structured information from the following resume.
+
+Rules:
+- Return only valid JSON matching the provided schema.
+- Do not invent or infer information.
+- Extract only information explicitly present in the resume.
+- Use an empty string for missing string values.
+- Use an empty array for missing array values.
+- Always include profile, stack, and facts.
+- Always include all fields inside stack.
+- Always include skills, experience, projects, and education inside facts.
+- Preserve the original wording of resume content where possible.
+- Do not add placeholder text such as "N/A" or "Unknown".
+
+Resume text:
+${extractedText}
+      `,
+
+      config: {
+        temperature: 0.1,
+        responseMimeType: "application/json",
+        responseSchema,
       },
     });
 
-    const rawText = response.text;
-    if (!rawText || rawText.trim().length === 0) {
-      throw new AppError(500, 'Received empty response from AI model during resume parsing.');
-    }
+    const rawText = response.text?.trim();
 
-    const cleanedJson = extractJsonFromText(rawText);
-    let parsed: any;
-    try {
-      parsed = JSON.parse(cleanedJson);
-    } catch (jsonErr) {
-      const msg = jsonErr instanceof Error ? jsonErr.message : String(jsonErr);
-      throw new AppError(500, `Failed to parse structured JSON from model response: ${msg}`);
-    }
-
-    // Explicitly guarantee no LaTeX template leaked into the profile response object
-    if (parsed.latexTemplate) delete parsed.latexTemplate;
-    if (parsed.latex) delete parsed.latex;
-    if (parsed.template) delete parsed.template;
-    if (parsed.updatedLatex) delete parsed.updatedLatex;
-
-    const validationResult = ParseMasterResumeResponseSchema.safeParse(parsed);
-    if (!validationResult.success) {
-      const issues = validationResult.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join(', ');
-      throw new AppError(500, `Profile response did not match expected schema: ${issues}`);
-    }
-
-    return validationResult.data;
-  } catch (error) {
-    if (error instanceof AppError) throw error;
-    const msg = error instanceof Error ? error.message : String(error);
-    throw new AppError(500, `Master resume parsing failed: ${msg}`);
-  }
-}
-
-/**
- * Checks whether pdflatex executable is installed and available in PATH.
- */
-async function isPdflatexAvailable(): Promise<boolean> {
-  try {
-    await execFileAsync('which', ['pdflatex']);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Safely compiles a LaTeX string into a PDF Buffer using local pdflatex.
- */
-export async function compileLatexToPdf(latex: string): Promise<Buffer> {
-  if (!latex || !latex.trim()) {
-    throw new AppError(400, 'LaTeX content is required for compilation.');
-  }
-
-  const hasPdflatex = await isPdflatexAvailable();
-  if (!hasPdflatex) {
-    throw new AppError(
-      501,
-      'Local PDF compilation is unavailable because pdflatex is not installed on this system. You can download the tailored .tex file directly and compile it with Overleaf or any local TeX editor.'
-    );
-  }
-
-  const tempDirId = crypto.randomUUID();
-  const tempDir = path.join(os.tmpdir(), `applyai-tex-${tempDirId}`);
-
-  try {
-    await fs.promises.mkdir(tempDir, { recursive: true });
-    const texPath = path.join(tempDir, 'resume.tex');
-    const pdfPath = path.join(tempDir, 'resume.pdf');
-
-    await fs.promises.writeFile(texPath, latex, 'utf8');
-
-    // Run pdflatex with strict sandboxing and timeouts
-    await execFileAsync(
-      'pdflatex',
-      [
-        '-interaction=nonstopmode',
-        '-halt-on-error',
-        '-output-directory',
-        tempDir,
-        texPath,
-      ],
-      {
-        cwd: tempDir,
-        timeout: 15000, // 15 second timeout
-        maxBuffer: 5 * 1024 * 1024,
-      }
-    );
-
-    if (!fs.existsSync(pdfPath)) {
+    if (!rawText) {
       throw new AppError(
-        500,
-        'pdflatex exited without generating a PDF file. Please check for syntax errors in your LaTeX template.'
+        502,
+        "The AI returned an empty resume parsing response.",
       );
     }
 
-    const pdfBuffer = await fs.promises.readFile(pdfPath);
-    return pdfBuffer;
-  } catch (error) {
-    if (error instanceof AppError) throw error;
-    const msg = error instanceof Error ? error.message : String(error);
-    throw new AppError(500, `LaTeX compilation error: ${msg}`);
-  } finally {
-    // Clean up temporary files safely
+    let parsed: unknown;
+
     try {
-      await fs.promises.rm(tempDir, { recursive: true, force: true });
-    } catch (cleanupErr) {
-      console.warn('Failed to clean up temporary LaTeX dir:', cleanupErr);
+      parsed = JSON.parse(extractJsonFromText(rawText));
+    } catch (error) {
+      console.error("[ApplyAI] Invalid resume parsing JSON:", error);
+
+      throw new AppError(
+        502,
+        "The AI returned invalid resume parsing JSON.",
+        error instanceof Error ? error.message : String(error),
+        { cause: error },
+      );
     }
+
+    const validationResult = ParseMasterResumeResponseSchema.safeParse(parsed);
+
+    if (!validationResult.success) {
+      console.error(
+        "[ApplyAI] Recruiter Zod issues:",
+        JSON.stringify(validationResult.error.issues, null, 2),
+      );
+
+      console.error(
+        "[ApplyAI] Actual parsed Gemini response:",
+        JSON.stringify(parsed, null, 2),
+      );
+
+      throw new AppError(
+        502,
+        "The recruiter search returned an invalid response structure.",
+      );
+    }
+    return validationResult.data;
+  } catch (error) {
+    if (error instanceof AppError) {
+      throw error;
+    }
+
+    const message = error instanceof Error ? error.message : String(error);
+
+    console.error("[ApplyAI] Master resume parsing failed:", error);
+
+    throw new AppError(
+      502,
+      "Master resume parsing failed. Please try again later.",
+      message,
+      { cause: error },
+    );
   }
 }

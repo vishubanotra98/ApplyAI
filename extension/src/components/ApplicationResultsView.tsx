@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState } from "react";
 import {
   ArrowLeft,
   Building2,
@@ -22,40 +22,35 @@ import {
   Send,
   Eye,
   Settings,
-} from 'lucide-react';
+} from "lucide-react";
 import {
   JobDescription,
   TailoredResumeResult,
   RecruiterSearchResponse,
   TailoredEmailResult,
-} from '../types';
-import { compilePdfApi } from '../api/client';
-import { LoadingState } from './LoadingState';
+} from "../types";
+import { compilePdfApi } from "../api/client";
+import { LoadingState } from "./LoadingState";
 
 interface ApplicationResultsViewProps {
   job: JobDescription;
-  // Tailor Resume State
   tailorResult: TailoredResumeResult | null;
   isTailoring: boolean;
   tailorError: string | null;
   onTailorResume: () => void;
 
-  // Recruiter Search State
   recruiterResult: RecruiterSearchResponse | null;
   isSearchingRecruiter: boolean;
   recruiterError: string | null;
   onFindRecruiter: () => void;
 
-  // Outreach Email State
   emailResult: TailoredEmailResult | null;
   isGeneratingEmail: boolean;
   emailError: string | null;
   onGenerateEmail: () => void;
 
-  // Combined action
   onRunAll: () => void;
 
-  // Navigation
   onBack: () => void;
   onOpenSettings: () => void;
 }
@@ -78,11 +73,12 @@ export const ApplicationResultsView: React.FC<ApplicationResultsViewProps> = ({
   onBack,
   onOpenSettings,
 }) => {
-  // UI toggles
   const [showChangesModal, setShowChangesModal] = useState(false);
   const [showLatexViewer, setShowLatexViewer] = useState(false);
   const [copiedTex, setCopiedTex] = useState(false);
-  const [copiedRecruiterEmail, setCopiedRecruiterEmail] = useState<string | null>(null);
+  const [copiedRecruiterEmail, setCopiedRecruiterEmail] = useState<
+    string | null
+  >(null);
   const [copiedSubject, setCopiedSubject] = useState(false);
   const [copiedEmailBody, setCopiedEmailBody] = useState(false);
   const [isCompilingPdf, setIsCompilingPdf] = useState(false);
@@ -91,12 +87,17 @@ export const ApplicationResultsView: React.FC<ApplicationResultsViewProps> = ({
   // LaTeX Download
   const handleDownloadTex = () => {
     if (!tailorResult?.updatedLatex) return;
-    const blob = new Blob([tailorResult.updatedLatex], { type: 'text/x-tex;charset=utf-8' });
+    const blob = new Blob([tailorResult.updatedLatex], {
+      type: "text/x-tex;charset=utf-8",
+    });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const a = document.createElement("a");
     a.href = url;
-    const companyClean = (job.company || 'Company').replace(/[^a-zA-Z0-9]/g, '_');
-    const titleClean = job.title.replace(/[^a-zA-Z0-9]/g, '_');
+    const companyClean = (job.company || "Company").replace(
+      /[^a-zA-Z0-9]/g,
+      "_",
+    );
+    const titleClean = job.title.replace(/[^a-zA-Z0-9]/g, "_");
     a.download = `Resume_${companyClean}_${titleClean}.tex`;
     document.body.appendChild(a);
     a.click();
@@ -112,32 +113,49 @@ export const ApplicationResultsView: React.FC<ApplicationResultsViewProps> = ({
       setCopiedTex(true);
       setTimeout(() => setCopiedTex(false), 2000);
     } catch (e) {
-      console.error('Failed to copy LaTeX code:', e);
+      console.error("Failed to copy LaTeX code:", e);
     }
   };
 
-  // PDF Compilation & Download
   const handleDownloadPdf = async () => {
     if (!tailorResult?.updatedLatex) return;
+
     setIsCompilingPdf(true);
     setPdfError(null);
+
     try {
       const blob = await compilePdfApi(tailorResult.updatedLatex);
+
+      if (!(blob instanceof Blob) || blob.size === 0) {
+        throw new Error("The server returned an empty or invalid PDF.");
+      }
+
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
+      const a = document.createElement("a");
+
+      const companyClean = (job?.company || "Company").replace(
+        /[^a-zA-Z0-9]/g,
+        "_",
+      );
+
+      const titleClean = (job?.title || "Position").replace(
+        /[^a-zA-Z0-9]/g,
+        "_",
+      );
+
       a.href = url;
-      const companyClean = (job.company || 'Company').replace(/[^a-zA-Z0-9]/g, '_');
-      const titleClean = job.title.replace(/[^a-zA-Z0-9]/g, '_');
       a.download = `Resume_${companyClean}_${titleClean}.pdf`;
       document.body.appendChild(a);
       a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      a.remove();
+
+      // Delay cleanup slightly
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (err) {
+      console.error("PDF download failed:", err);
+
       setPdfError(
-        err instanceof Error
-          ? err.message
-          : 'PDF compilation is not available on this server. Please download the .tex file to compile via Overleaf.'
+        err instanceof Error ? err.message : "PDF compilation failed.",
       );
     } finally {
       setIsCompilingPdf(false);
@@ -151,11 +169,10 @@ export const ApplicationResultsView: React.FC<ApplicationResultsViewProps> = ({
       setCopiedRecruiterEmail(email);
       setTimeout(() => setCopiedRecruiterEmail(null), 2000);
     } catch (e) {
-      console.error('Failed to copy email:', e);
+      console.error("Failed to copy email:", e);
     }
   };
 
-  // Outreach Email Copy Subject
   const handleCopySubject = async () => {
     if (!emailResult?.subject) return;
     try {
@@ -163,11 +180,10 @@ export const ApplicationResultsView: React.FC<ApplicationResultsViewProps> = ({
       setCopiedSubject(true);
       setTimeout(() => setCopiedSubject(false), 2000);
     } catch (e) {
-      console.error('Failed to copy subject:', e);
+      console.error("Failed to copy subject:", e);
     }
   };
 
-  // Outreach Email Copy Body
   const handleCopyEmailBody = async () => {
     if (!emailResult?.body) return;
     try {
@@ -175,19 +191,21 @@ export const ApplicationResultsView: React.FC<ApplicationResultsViewProps> = ({
       setCopiedEmailBody(true);
       setTimeout(() => setCopiedEmailBody(false), 2000);
     } catch (e) {
-      console.error('Failed to copy email body:', e);
+      console.error("Failed to copy email body:", e);
     }
   };
 
-  // Save / Download Email as text file
   const handleSaveEmail = () => {
     if (!emailResult) return;
     const content = `Subject: ${emailResult.subject}\n\n${emailResult.body}`;
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const a = document.createElement("a");
     a.href = url;
-    const companyClean = (job.company || 'Company').replace(/[^a-zA-Z0-9]/g, '_');
+    const companyClean = (job.company || "Company").replace(
+      /[^a-zA-Z0-9]/g,
+      "_",
+    );
     a.download = `Outreach_Email_${companyClean}.txt`;
     document.body.appendChild(a);
     a.click();
@@ -195,13 +213,14 @@ export const ApplicationResultsView: React.FC<ApplicationResultsViewProps> = ({
     URL.revokeObjectURL(url);
   };
 
-  // Format concise change bullets
   const changeBullets: string[] =
     tailorResult?.changesSummary && tailorResult.changesSummary.length > 0
       ? tailorResult.changesSummary
       : tailorResult?.changes
-      ? tailorResult.changes.map((c) => c.description || c.change || `${c.type}: ${c.section}`).slice(0, 6)
-      : [];
+        ? tailorResult.changes
+            .map((c) => c.description || c.change || `${c.type}: ${c.section}`)
+            .slice(0, 6)
+        : [];
 
   return (
     <div className="flex flex-col h-full bg-neutral-900 text-neutral-100 text-sm select-none">
@@ -217,9 +236,11 @@ export const ApplicationResultsView: React.FC<ApplicationResultsViewProps> = ({
             <ArrowLeft className="w-3.5 h-3.5" />
           </button>
           <div className="flex flex-col">
-            <span className="font-semibold text-neutral-200 text-xs">Application Package</span>
+            <span className="font-semibold text-neutral-200 text-xs">
+              Application Package
+            </span>
             <span className="text-[10px] text-neutral-400 truncate max-w-[170px]">
-              {job.company || 'Company'} • {job.title}
+              {job.company || "Company"} • {job.title}
             </span>
           </div>
         </div>
@@ -234,7 +255,9 @@ export const ApplicationResultsView: React.FC<ApplicationResultsViewProps> = ({
           >
             <RefreshCw
               className={`w-3 h-3 ${
-                isTailoring || isSearchingRecruiter || isGeneratingEmail ? 'animate-spin' : ''
+                isTailoring || isSearchingRecruiter || isGeneratingEmail
+                  ? "animate-spin"
+                  : ""
               }`}
             />
             <span>Run All</span>
@@ -261,7 +284,7 @@ export const ApplicationResultsView: React.FC<ApplicationResultsViewProps> = ({
               </h3>
               <p className="text-xs text-neutral-300 flex items-center gap-1 mt-0.5">
                 <Building2 className="w-3 h-3 text-neutral-400" />
-                <span>{job.company || 'Company'}</span>
+                <span>{job.company || "Company"}</span>
                 {job.location && (
                   <>
                     <span className="text-neutral-600">•</span>
@@ -281,7 +304,13 @@ export const ApplicationResultsView: React.FC<ApplicationResultsViewProps> = ({
               className="py-1.5 px-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-[11px] font-medium rounded border border-neutral-700 flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50"
             >
               <Sparkles className="w-3 h-3 text-neutral-300" />
-              <span>{isTailoring ? 'Tailoring...' : tailorResult ? 'Re-Tailor' : 'Tailor Resume'}</span>
+              <span>
+                {isTailoring
+                  ? "Tailoring..."
+                  : tailorResult
+                    ? "Re-Tailor"
+                    : "Tailor Resume"}
+              </span>
             </button>
             <button
               id="applyai-results-recruiter-btn"
@@ -290,7 +319,13 @@ export const ApplicationResultsView: React.FC<ApplicationResultsViewProps> = ({
               className="py-1.5 px-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-[11px] font-medium rounded border border-neutral-700 flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50"
             >
               <Search className="w-3 h-3 text-neutral-300" />
-              <span>{isSearchingRecruiter ? 'Searching...' : recruiterResult ? 'Re-Search' : 'Find Recruiter'}</span>
+              <span>
+                {isSearchingRecruiter
+                  ? "Searching..."
+                  : recruiterResult
+                    ? "Re-Search"
+                    : "Find Recruiter"}
+              </span>
             </button>
           </div>
         </div>
@@ -318,10 +353,10 @@ export const ApplicationResultsView: React.FC<ApplicationResultsViewProps> = ({
             <div className="py-4">
               <LoadingState
                 steps={[
-                  'Analyzing job description keywords...',
-                  'Selecting relevant projects and skills...',
-                  'Rewriting bullets for high JD emphasis...',
-                  'Validating zero-fabrication constraints...',
+                  "Analyzing job description keywords...",
+                  "Selecting relevant projects and skills...",
+                  "Rewriting bullets for high JD emphasis...",
+                  "Validating zero-fabrication constraints...",
                 ]}
                 stepIntervalMs={1600}
               />
@@ -351,15 +386,25 @@ export const ApplicationResultsView: React.FC<ApplicationResultsViewProps> = ({
                 <div className="space-y-1">
                   {changeBullets.length > 0 ? (
                     changeBullets.map((bullet, idx) => (
-                      <div key={idx} className="flex items-start gap-1.5 text-[11px] text-neutral-300">
-                        <span className="text-emerald-400 font-bold shrink-0">✓</span>
+                      <div
+                        key={idx}
+                        className="flex items-start gap-1.5 text-[11px] text-neutral-300"
+                      >
+                        <span className="text-emerald-400 font-bold shrink-0">
+                          ✓
+                        </span>
                         <span className="leading-snug">{bullet}</span>
                       </div>
                     ))
                   ) : (
                     <div className="flex items-start gap-1.5 text-[11px] text-neutral-300">
-                      <span className="text-emerald-400 font-bold shrink-0">✓</span>
-                      <span>Emphasized matching skills and experiences for this role.</span>
+                      <span className="text-emerald-400 font-bold shrink-0">
+                        ✓
+                      </span>
+                      <span>
+                        Emphasized matching skills and experiences for this
+                        role.
+                      </span>
                     </div>
                   )}
                 </div>
@@ -373,7 +418,9 @@ export const ApplicationResultsView: React.FC<ApplicationResultsViewProps> = ({
                   className="flex-1 py-1.5 px-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs font-medium rounded border border-neutral-700 flex items-center justify-center gap-1.5 transition-colors"
                 >
                   <Eye className="w-3.5 h-3.5" />
-                  <span>{showChangesModal ? 'Hide Details' : 'View Changes'}</span>
+                  <span>
+                    {showChangesModal ? "Hide Details" : "View Changes"}
+                  </span>
                 </button>
 
                 <button
@@ -383,7 +430,9 @@ export const ApplicationResultsView: React.FC<ApplicationResultsViewProps> = ({
                   className="flex-1 py-1.5 px-2 bg-neutral-100 hover:bg-white text-neutral-950 text-xs font-semibold rounded flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-[0.99] disabled:opacity-50"
                 >
                   <Download className="w-3.5 h-3.5" />
-                  <span>{isCompilingPdf ? 'Compiling PDF...' : 'Download Resume'}</span>
+                  <span>
+                    {isCompilingPdf ? "Compiling PDF..." : "Download Resume"}
+                  </span>
                 </button>
               </div>
 
@@ -392,7 +441,8 @@ export const ApplicationResultsView: React.FC<ApplicationResultsViewProps> = ({
                 <div className="p-2 rounded bg-amber-950/30 border border-amber-900/40 text-[11px] text-amber-300 space-y-1">
                   <p className="font-medium">{pdfError}</p>
                   <p className="text-[10px] text-amber-400/80">
-                    Use <strong>Download .tex</strong> below to compile instantly on Overleaf or your local TeX distribution.
+                    Use <strong>Download .tex</strong> below to compile
+                    instantly on Overleaf or your local TeX distribution.
                   </p>
                 </div>
               )}
@@ -404,37 +454,45 @@ export const ApplicationResultsView: React.FC<ApplicationResultsViewProps> = ({
                   {tailorResult.resumeAnalysis.matchedSkills?.length > 0 && (
                     <div>
                       <div className="text-[10px] uppercase font-semibold text-neutral-400 tracking-wider mb-1">
-                        Matched Skills ({tailorResult.resumeAnalysis.matchedSkills.length})
+                        Matched Skills (
+                        {tailorResult.resumeAnalysis.matchedSkills.length})
                       </div>
                       <div className="flex flex-wrap gap-1">
-                        {tailorResult.resumeAnalysis.matchedSkills.map((s, i) => (
-                          <span
-                            key={i}
-                            className="px-1.5 py-0.5 text-[10px] font-medium bg-emerald-950/70 text-emerald-300 border border-emerald-800/60 rounded"
-                          >
-                            {s}
-                          </span>
-                        ))}
+                        {tailorResult.resumeAnalysis.matchedSkills.map(
+                          (s, i) => (
+                            <span
+                              key={i}
+                              className="px-1.5 py-0.5 text-[10px] font-medium bg-emerald-950/70 text-emerald-300 border border-emerald-800/60 rounded"
+                            >
+                              {s}
+                            </span>
+                          ),
+                        )}
                       </div>
                     </div>
                   )}
 
                   {/* Missing in resume strictly omitted */}
-                  {tailorResult.resumeAnalysis.missingTechnologies?.length > 0 && (
+                  {tailorResult.resumeAnalysis.missingTechnologies?.length >
+                    0 && (
                     <div className="p-2 bg-amber-950/20 border border-amber-900/30 rounded space-y-1">
                       <div className="flex items-center gap-1 text-[10px] font-semibold text-amber-400">
                         <AlertTriangle className="w-3 h-3" />
-                        <span>JD Technologies Absent in Resume — Strictly Omitted</span>
+                        <span>
+                          JD Technologies Absent in Resume — Strictly Omitted
+                        </span>
                       </div>
                       <div className="flex flex-wrap gap-1 pt-0.5">
-                        {tailorResult.resumeAnalysis.missingTechnologies.map((m, i) => (
-                          <span
-                            key={i}
-                            className="px-1.5 py-0.5 text-[10px] font-mono bg-amber-950/50 text-amber-300 border border-amber-800/40 rounded line-through opacity-80"
-                          >
-                            {m}
-                          </span>
-                        ))}
+                        {tailorResult.resumeAnalysis.missingTechnologies.map(
+                          (m, i) => (
+                            <span
+                              key={i}
+                              className="px-1.5 py-0.5 text-[10px] font-mono bg-amber-950/50 text-amber-300 border border-amber-800/40 rounded line-through opacity-80"
+                            >
+                              {m}
+                            </span>
+                          ),
+                        )}
                       </div>
                       <p className="text-[9px] text-amber-400/80">
                         Zero fabrication: omitted to keep resume 100% truthful.
@@ -465,7 +523,9 @@ export const ApplicationResultsView: React.FC<ApplicationResultsViewProps> = ({
                             {item.description || item.change}
                           </p>
                           {item.reason && (
-                            <p className="text-[10px] text-neutral-400 italic">{item.reason}</p>
+                            <p className="text-[10px] text-neutral-400 italic">
+                              {item.reason}
+                            </p>
                           )}
                         </div>
                       ))}
@@ -476,7 +536,9 @@ export const ApplicationResultsView: React.FC<ApplicationResultsViewProps> = ({
             </div>
           ) : (
             <div className="p-3 bg-neutral-900/40 border border-dashed border-neutral-800 rounded text-center space-y-1.5">
-              <p className="text-xs text-neutral-400">Resume not tailored yet.</p>
+              <p className="text-xs text-neutral-400">
+                Resume not tailored yet.
+              </p>
               <button
                 id="applyai-start-tailoring-btn"
                 onClick={onTailorResume}
@@ -509,7 +571,8 @@ export const ApplicationResultsView: React.FC<ApplicationResultsViewProps> = ({
           {tailorResult?.updatedLatex ? (
             <div className="space-y-2">
               <p className="text-[11px] text-neutral-400 leading-relaxed">
-                All document classes, custom macros, styling, and formatting preserved.
+                All document classes, custom macros, styling, and formatting
+                preserved.
               </p>
 
               {/* Action Buttons: [View], [Copy], [Download .tex] */}
@@ -520,7 +583,7 @@ export const ApplicationResultsView: React.FC<ApplicationResultsViewProps> = ({
                   className="py-1.5 px-2 bg-neutral-800 hover:bg-neutral-750 text-neutral-200 text-xs font-medium rounded border border-neutral-700 flex items-center justify-center gap-1 transition-colors"
                 >
                   <FileCode className="w-3.5 h-3.5 text-neutral-400" />
-                  <span>{showLatexViewer ? 'Hide' : 'View'}</span>
+                  <span>{showLatexViewer ? "Hide" : "View"}</span>
                 </button>
 
                 <button
@@ -562,7 +625,8 @@ export const ApplicationResultsView: React.FC<ApplicationResultsViewProps> = ({
           ) : (
             <div className="p-3 bg-neutral-900/40 border border-dashed border-neutral-800 rounded text-center">
               <p className="text-xs text-neutral-400">
-                Generate the tailored resume above to view and download updated LaTeX.
+                Generate the tailored resume above to view and download updated
+                LaTeX.
               </p>
             </div>
           )}
@@ -579,20 +643,21 @@ export const ApplicationResultsView: React.FC<ApplicationResultsViewProps> = ({
                 3. Recruiter
               </h4>
             </div>
-            {recruiterResult?.recruiters && recruiterResult.recruiters.length > 0 && (
-              <span className="text-[10px] text-purple-400 font-mono">
-                {recruiterResult.recruiters.length} Found
-              </span>
-            )}
+            {recruiterResult?.recruiters &&
+              recruiterResult.recruiters.length > 0 && (
+                <span className="text-[10px] text-purple-400 font-mono">
+                  {recruiterResult.recruiters.length} Found
+                </span>
+              )}
           </div>
 
           {isSearchingRecruiter ? (
             <div className="py-4">
               <LoadingState
                 steps={[
-                  'Searching public company talent sources...',
-                  'Locating verified technical recruiters...',
-                  'Validating public emails with strict zero-guess policy...',
+                  "Searching public company talent sources...",
+                  "Locating verified technical recruiters...",
+                  "Validating public emails with strict zero-guess policy...",
                 ]}
                 stepIntervalMs={1600}
               />
@@ -617,7 +682,8 @@ export const ApplicationResultsView: React.FC<ApplicationResultsViewProps> = ({
               {recruiterResult.recruiters.length === 0 ? (
                 <div className="p-3 bg-neutral-900/60 border border-neutral-800 rounded text-xs space-y-2">
                   <p className="text-neutral-300">
-                    No clearly identifiable recruiter found publicly for {job.company || 'this company'}.
+                    No clearly identifiable recruiter found publicly for{" "}
+                    {job.company || "this company"}.
                   </p>
                   {recruiterResult.generalContactEmail && (
                     <div className="flex items-center justify-between p-2 bg-neutral-950 rounded border border-neutral-800">
@@ -626,10 +692,15 @@ export const ApplicationResultsView: React.FC<ApplicationResultsViewProps> = ({
                       </span>
                       <button
                         id="applyai-copy-general-recruiter-email-btn"
-                        onClick={() => handleCopyRecruiterEmail(recruiterResult.generalContactEmail!)}
+                        onClick={() =>
+                          handleCopyRecruiterEmail(
+                            recruiterResult.generalContactEmail!,
+                          )
+                        }
                         className="text-[11px] text-neutral-400 hover:text-white flex items-center gap-1"
                       >
-                        {copiedRecruiterEmail === recruiterResult.generalContactEmail ? (
+                        {copiedRecruiterEmail ===
+                        recruiterResult.generalContactEmail ? (
                           <CheckCheck className="w-3 h-3 text-emerald-400" />
                         ) : (
                           <Copy className="w-3 h-3" />
@@ -639,7 +710,9 @@ export const ApplicationResultsView: React.FC<ApplicationResultsViewProps> = ({
                     </div>
                   )}
                   {recruiterResult.notes && (
-                    <p className="text-[10px] text-neutral-400 italic">{recruiterResult.notes}</p>
+                    <p className="text-[10px] text-neutral-400 italic">
+                      {recruiterResult.notes}
+                    </p>
                   )}
                 </div>
               ) : (
@@ -656,7 +729,9 @@ export const ApplicationResultsView: React.FC<ApplicationResultsViewProps> = ({
                           <span>{recruiter.name}</span>
                         </div>
                         {recruiter.title && (
-                          <p className="text-[11px] text-neutral-300 mt-0.5">{recruiter.title}</p>
+                          <p className="text-[11px] text-neutral-300 mt-0.5">
+                            {recruiter.title}
+                          </p>
                         )}
                         {recruiter.company && (
                           <p className="text-[10px] text-neutral-400 flex items-center gap-1 mt-0.5">
@@ -679,7 +754,9 @@ export const ApplicationResultsView: React.FC<ApplicationResultsViewProps> = ({
                           </span>
                           <button
                             id={`applyai-copy-recruiter-email-${idx}`}
-                            onClick={() => handleCopyRecruiterEmail(recruiter.email!)}
+                            onClick={() =>
+                              handleCopyRecruiterEmail(recruiter.email!)
+                            }
                             className="flex items-center gap-1 text-[10px] font-medium text-neutral-300 hover:text-white px-1.5 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 transition-colors"
                           >
                             {copiedRecruiterEmail === recruiter.email ? (
@@ -742,7 +819,9 @@ export const ApplicationResultsView: React.FC<ApplicationResultsViewProps> = ({
             </div>
           ) : (
             <div className="p-3 bg-neutral-900/40 border border-dashed border-neutral-800 rounded text-center space-y-1.5">
-              <p className="text-xs text-neutral-400">Recruiter research not performed yet.</p>
+              <p className="text-xs text-neutral-400">
+                Recruiter research not performed yet.
+              </p>
               <button
                 id="applyai-start-recruiter-btn"
                 onClick={onFindRecruiter}
@@ -776,9 +855,9 @@ export const ApplicationResultsView: React.FC<ApplicationResultsViewProps> = ({
             <div className="py-4">
               <LoadingState
                 steps={[
-                  'Analyzing role requirements and candidate experience...',
-                  'Crafting direct, non-generic pitch without AI clichés...',
-                  'Verifying all mentioned technologies match candidate stack...',
+                  "Analyzing role requirements and candidate experience...",
+                  "Crafting direct, non-generic pitch without AI clichés...",
+                  "Verifying all mentioned technologies match candidate stack...",
                 ]}
                 stepIntervalMs={1500}
               />
@@ -907,7 +986,8 @@ export const ApplicationResultsView: React.FC<ApplicationResultsViewProps> = ({
           ) : (
             <div className="p-3 bg-neutral-900/40 border border-dashed border-neutral-800 rounded text-center space-y-1.5">
               <p className="text-xs text-neutral-400">
-                Generate tailored outreach email personalized for this job and verified recruiter.
+                Generate tailored outreach email personalized for this job and
+                verified recruiter.
               </p>
               <button
                 id="applyai-start-email-btn"

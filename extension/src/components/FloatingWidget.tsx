@@ -1,60 +1,62 @@
-import React, { useState, useEffect } from 'react';
-import { Sparkles } from 'lucide-react';
+import React, { useState, useEffect } from "react";
+import { Sparkles } from "lucide-react";
 import {
   JobDescription,
   TailoredResumeResult,
   RecruiterSearchResponse,
   TailoredEmailResult,
   ExtensionActiveTab,
-} from '../types';
-import { ApplyPanel } from './ApplyPanel';
-import { ResumePanel } from './ResumePanel';
-import { RecruiterPanel } from './RecruiterPanel';
-import { SettingsPanel } from './SettingsPanel';
-import { ApplicationResultsView } from './ApplicationResultsView';
+} from "../types";
+import { ApplyPanel } from "./ApplyPanel";
+import { ResumePanel } from "./ResumePanel";
+import { RecruiterPanel } from "./RecruiterPanel";
+import { SettingsPanel } from "./SettingsPanel";
+import { ApplicationResultsView } from "./ApplicationResultsView";
 import {
   analyzeJdApi,
   tailorResumeApi,
   findRecruiterApi,
   generateOutreachEmailApi,
-} from '../api/client';
-import { getStoredData } from '../storage/storage';
+} from "../api/client";
+import { getStoredData } from "../storage/storage";
 
 interface FloatingWidgetProps {
   initialJob?: JobDescription | null;
-  pageTextProvider?: () => { pageText: string; title: string; url: string };
   defaultOpen?: boolean;
 }
 
 export const FloatingWidget: React.FC<FloatingWidgetProps> = ({
   initialJob = null,
-  pageTextProvider,
   defaultOpen = false,
 }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
-  const [activeTab, setActiveTab] = useState<ExtensionActiveTab>('apply');
+  const [activeTab, setActiveTab] = useState<ExtensionActiveTab>("apply");
   const [job, setJob] = useState<JobDescription | null>(initialJob);
   const [isDetecting, setIsDetecting] = useState(false);
   const [detectError, setDetectError] = useState<string | null>(null);
 
   // Resume Tailoring State
-  const [tailorResult, setTailorResult] = useState<TailoredResumeResult | null>(null);
+  const [tailorResult, setTailorResult] = useState<TailoredResumeResult | null>(
+    null,
+  );
   const [isTailoring, setIsTailoring] = useState(false);
   const [tailorError, setTailorError] = useState<string | null>(null);
 
   // Recruiter Search State
-  const [recruiterResult, setRecruiterResult] = useState<RecruiterSearchResponse | null>(null);
+  const [recruiterResult, setRecruiterResult] =
+    useState<RecruiterSearchResponse | null>(null);
   const [isSearchingRecruiters, setIsSearchingRecruiters] = useState(false);
   const [recruiterError, setRecruiterError] = useState<string | null>(null);
 
   // Outreach Email State
-  const [emailResult, setEmailResult] = useState<TailoredEmailResult | null>(null);
+  const [emailResult, setEmailResult] = useState<TailoredEmailResult | null>(
+    null,
+  );
   const [isGeneratingEmail, setIsGeneratingEmail] = useState(false);
   const [emailError, setEmailError] = useState<string | null>(null);
 
-  // Automatic initial scan if pageTextProvider is provided and no initial job
   useEffect(() => {
-    if (!job && pageTextProvider && isOpen) {
+    if (!job && isOpen) {
       handleDetectJob();
     }
   }, [isOpen]);
@@ -62,25 +64,101 @@ export const FloatingWidget: React.FC<FloatingWidgetProps> = ({
   const handleDetectJob = async () => {
     setIsDetecting(true);
     setDetectError(null);
+
     try {
-      let pageData: { pageText: string; title: string; url: string };
-      if (pageTextProvider) {
-        pageData = pageTextProvider();
-      } else if (typeof document !== 'undefined') {
-        pageData = {
-          pageText: document.body ? document.body.innerText : '',
-          title: document.title || '',
-          url: window.location.href || '',
-        };
-      } else {
-        throw new Error('No page content available to extract.');
+      if (
+        typeof chrome === "undefined" ||
+        !chrome.tabs?.query ||
+        !chrome.scripting?.executeScript
+      ) {
+        throw new Error("Chrome extension APIs are unavailable.");
       }
 
+      const [activeTab] = await chrome.tabs.query({
+        active: true,
+        currentWindow: true,
+      });
+
+      if (!activeTab?.id) {
+        throw new Error("Could not find the active tab.");
+      }
+
+      const url = activeTab.url ?? "";
+
+      const unsupportedProtocols = [
+        "chrome://",
+        "chrome-extension://",
+        "edge://",
+        "about:",
+        "devtools://",
+        "view-source:",
+      ];
+
+      if (
+        !url ||
+        unsupportedProtocols.some((protocol) => url.startsWith(protocol))
+      ) {
+        throw new Error("ApplyAI cannot read this page.");
+      }
+
+      console.log("[ApplyAI] Active tab:", {
+        id: activeTab.id,
+        title: activeTab.title,
+        url,
+      });
+
+      const results = await chrome.scripting.executeScript({
+        target: {
+          tabId: activeTab.id,
+        },
+
+        func: () => {
+          const candidates = [
+            document.querySelector("main"),
+            document.querySelector("article"),
+            document.querySelector('[role="main"]'),
+            document.body,
+          ];
+
+          const root =
+            candidates.find(
+              (element) =>
+                element &&
+                ((element as HTMLElement).innerText?.trim().length ?? 0) > 500,
+            ) ?? document.body;
+
+          const pageText =
+            (root as HTMLElement | null)?.innerText?.trim() ?? "";
+
+          return {
+            pageText: pageText.slice(0, 50000),
+            title: document.title || "",
+            url: window.location.href || "",
+          };
+        },
+      });
+
+      const pageData = results?.[0]?.result;
+
+      if (!pageData?.pageText?.trim()) {
+        throw new Error("No readable content was found on this page.");
+      }
+
+      console.log("[ApplyAI] Extracted characters:", pageData.pageText.length);
+
+      console.log("[ApplyAI] Sending JD to backend...");
+
       const analyzed = await analyzeJdApi(pageData);
+
       setJob(analyzed);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to extract job description.';
-      setDetectError(msg);
+      console.error("[ApplyAI] Job detection failed:", err);
+
+      setDetectError(
+        err instanceof Error
+          ? err.message
+          : "Failed to extract job description.",
+      );
     } finally {
       setIsDetecting(false);
     }
@@ -88,7 +166,7 @@ export const FloatingWidget: React.FC<FloatingWidgetProps> = ({
 
   const handleTailorResume = async () => {
     if (!job) return;
-    setActiveTab('results');
+    setActiveTab("results");
     setIsTailoring(true);
     setTailorError(null);
     try {
@@ -96,7 +174,8 @@ export const FloatingWidget: React.FC<FloatingWidgetProps> = ({
       const result = await tailorResumeApi({
         job,
         resumeFacts: stored.resume.facts,
-        latexTemplate: stored.masterResume?.latexTemplate || stored.resume.latexTemplate,
+        latexTemplate:
+          stored.masterResume?.latexTemplate || stored.resume.latexTemplate,
         stack: stored.stack,
       });
       setTailorResult(result);
@@ -106,7 +185,8 @@ export const FloatingWidget: React.FC<FloatingWidgetProps> = ({
         handleGenerateEmail(result);
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Resume tailoring failed.';
+      const msg =
+        err instanceof Error ? err.message : "Resume tailoring failed.";
       setTailorError(msg);
     } finally {
       setIsTailoring(false);
@@ -115,19 +195,20 @@ export const FloatingWidget: React.FC<FloatingWidgetProps> = ({
 
   const handleFindRecruiter = async () => {
     if (!job) return;
-    setActiveTab('results');
+    setActiveTab("results");
     setIsSearchingRecruiters(true);
     setRecruiterError(null);
     try {
       const result = await findRecruiterApi({
-        company: job.company || 'Unknown Company',
+        company: job.company || "Unknown Company",
         jobTitle: job.title,
         location: job.location,
-        jd: `${job.title} at ${job.company || ''}. Skills: ${job.skills.join(', ')}`,
+        jd: `${job.title} at ${job.company || ""}. Skills: ${job.skills.join(", ")}`,
       });
       setRecruiterResult(result);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Recruiter search failed.';
+      const msg =
+        err instanceof Error ? err.message : "Recruiter search failed.";
       setRecruiterError(msg);
     } finally {
       setIsSearchingRecruiters(false);
@@ -145,17 +226,23 @@ export const FloatingWidget: React.FC<FloatingWidgetProps> = ({
         resumeFacts: stored.resume.facts,
         stack: stored.stack,
         profile: stored.profile,
-        recruiter: recruiterResult?.recruiters?.[0] ? {
-          name: recruiterResult.recruiters[0].name,
-          title: recruiterResult.recruiters[0].title,
-          company: recruiterResult.recruiters[0].company || job.company,
-        } : {
-          company: job.company,
-        },
+        recruiter: recruiterResult?.recruiters?.[0]
+          ? {
+              name: recruiterResult.recruiters[0].name,
+              title: recruiterResult.recruiters[0].title,
+              company: recruiterResult.recruiters[0].company || job.company,
+            }
+          : {
+              company: job.company,
+            },
       });
       setEmailResult(result);
     } catch (err) {
-      setEmailError(err instanceof Error ? err.message : 'Failed to generate outreach email.');
+      setEmailError(
+        err instanceof Error
+          ? err.message
+          : "Failed to generate outreach email.",
+      );
     } finally {
       setIsGeneratingEmail(false);
     }
@@ -163,11 +250,8 @@ export const FloatingWidget: React.FC<FloatingWidgetProps> = ({
 
   const handleRunAll = async () => {
     if (!job) return;
-    setActiveTab('results');
-    await Promise.allSettled([
-      handleTailorResume(),
-      handleFindRecruiter(),
-    ]);
+    setActiveTab("results");
+    await Promise.allSettled([handleTailorResume(), handleFindRecruiter()]);
     await handleGenerateEmail();
   };
 
@@ -191,7 +275,7 @@ export const FloatingWidget: React.FC<FloatingWidgetProps> = ({
           id="applyai-floating-panel"
           className="w-[360px] h-[520px] max-h-[85vh] bg-neutral-900 border border-neutral-800 rounded-xl shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150"
         >
-          {activeTab === 'apply' && (
+          {activeTab === "apply" && (
             <ApplyPanel
               job={job}
               isDetecting={isDetecting}
@@ -199,12 +283,12 @@ export const FloatingWidget: React.FC<FloatingWidgetProps> = ({
               onDetectJd={handleDetectJob}
               onTailorResume={handleTailorResume}
               onFindRecruiter={handleFindRecruiter}
-              onOpenSettings={() => setActiveTab('settings')}
+              onOpenSettings={() => setActiveTab("settings")}
               onClose={() => setIsOpen(false)}
             />
           )}
 
-          {activeTab === 'results' && job && (
+          {activeTab === "results" && job && (
             <ApplicationResultsView
               job={job}
               tailorResult={tailorResult}
@@ -220,12 +304,12 @@ export const FloatingWidget: React.FC<FloatingWidgetProps> = ({
               emailError={emailError}
               onGenerateEmail={() => handleGenerateEmail()}
               onRunAll={handleRunAll}
-              onBack={() => setActiveTab('apply')}
-              onOpenSettings={() => setActiveTab('settings')}
+              onBack={() => setActiveTab("apply")}
+              onOpenSettings={() => setActiveTab("settings")}
             />
           )}
 
-          {activeTab === 'resume' && job && (
+          {activeTab === "resume" && job && (
             <ResumePanel
               job={job}
               tailorResult={tailorResult}
@@ -235,24 +319,26 @@ export const FloatingWidget: React.FC<FloatingWidgetProps> = ({
               isGeneratingEmail={isGeneratingEmail}
               emailError={emailError}
               onGenerateEmail={() => handleGenerateEmail()}
-              onBack={() => setActiveTab('apply')}
+              onBack={() => setActiveTab("apply")}
               onRetry={handleTailorResume}
             />
           )}
 
-          {activeTab === 'recruiter' && job && (
+          {activeTab === "recruiter" && job && (
             <RecruiterPanel
               job={job}
               result={recruiterResult}
               isLoading={isSearchingRecruiters}
               error={recruiterError}
-              onBack={() => setActiveTab('apply')}
+              onBack={() => setActiveTab("apply")}
               onRetry={handleFindRecruiter}
             />
           )}
 
-          {activeTab === 'settings' && (
-            <SettingsPanel onBack={() => setActiveTab(job ? 'results' : 'apply')} />
+          {activeTab === "settings" && (
+            <SettingsPanel
+              onBack={() => setActiveTab(job ? "results" : "apply")}
+            />
           )}
         </div>
       )}

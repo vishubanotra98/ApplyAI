@@ -1,24 +1,41 @@
-import { Type } from '@google/genai';
-import { getGeminiClient, getModelName, extractJsonFromText } from './gemini.service';
-import { OUTREACH_EMAIL_SYSTEM_INSTRUCTION, buildOutreachEmailPrompt } from '../prompts/email.prompt';
+import { Type } from "@google/genai";
+
+import {
+  getGeminiClient,
+  getModelName,
+  extractJsonFromText,
+} from "./gemini.service.js";
+
+import {
+  OUTREACH_EMAIL_SYSTEM_INSTRUCTION,
+  buildOutreachEmailPrompt,
+} from "../prompts/email.prompt.js";
+
 import {
   GenerateOutreachEmailRequest,
   GenerateOutreachEmailResponse,
   GenerateOutreachEmailResponseSchema,
-} from '../schemas/email.schema';
-import { AppError } from '../utils/errors';
+} from "../schemas/email.schema.js";
+
+import { AppError } from "../utils/errors.js";
 
 export async function generateOutreachEmail(
-  data: GenerateOutreachEmailRequest
+  data: GenerateOutreachEmailRequest,
 ): Promise<GenerateOutreachEmailResponse> {
   const { job, resumeFacts } = data;
 
-  if (!job || !job.title) {
-    throw new AppError(400, 'A valid job description is required to generate an outreach email.');
+  if (!job?.title?.trim()) {
+    throw new AppError(
+      400,
+      "A valid job description with a title is required.",
+    );
   }
 
-  if (!resumeFacts || !resumeFacts.skills) {
-    throw new AppError(400, 'Candidate resume facts are required as the ground truth.');
+  if (!resumeFacts?.skills) {
+    throw new AppError(
+      400,
+      "Candidate resume facts are required as the ground truth.",
+    );
   }
 
   const ai = getGeminiClient();
@@ -32,38 +49,66 @@ export async function generateOutreachEmail(
       contents: prompt,
       config: {
         systemInstruction: OUTREACH_EMAIL_SYSTEM_INSTRUCTION,
-        temperature: 0.2, // Low temperature for high factual adherence
-        responseMimeType: 'application/json',
+        temperature: 0.1,
+        responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
           properties: {
             subject: {
               type: Type.STRING,
-              description: 'Clear, concise professional email subject line',
+              description: "A concise, professional email subject line.",
             },
             body: {
               type: Type.STRING,
-              description: 'Body of the outreach email adhering strictly to candidate facts',
+              description:
+                "A concise outreach email grounded only in candidate facts.",
             },
           },
-          required: ['subject', 'body'],
+          required: ["subject", "body"],
         },
       },
     });
 
-    const rawText = response.text;
+    const rawText = response.text?.trim();
+
     if (!rawText) {
-      throw new AppError(500, 'Empty response received from AI model.');
+      throw new AppError(502, "The AI model returned an empty response.");
     }
 
-    const cleanJson = extractJsonFromText(rawText);
-    const parsed = JSON.parse(cleanJson);
-    const validated = GenerateOutreachEmailResponseSchema.parse(parsed);
+    let parsed: unknown;
 
-    return validated;
+    try {
+      const cleanJson = extractJsonFromText(rawText);
+      parsed = JSON.parse(cleanJson);
+    } catch {
+      throw new AppError(
+        502,
+        "The AI model returned an invalid JSON response.",
+      );
+    }
+
+    const result = GenerateOutreachEmailResponseSchema.safeParse(parsed);
+
+    if (!result.success) {
+      console.error(
+        "[ApplyAI] Outreach email schema validation failed:",
+        result.error.flatten(),
+      );
+
+      throw new AppError(
+        502,
+        "The AI response did not match the expected email format.",
+      );
+    }
+
+    return result.data;
   } catch (error) {
-    if (error instanceof AppError) throw error;
-    const msg = error instanceof Error ? error.message : String(error);
-    throw new AppError(500, `Failed to generate tailored outreach email: ${msg}`);
+    if (error instanceof AppError) {
+      throw error;
+    }
+
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[ApplyAI] Outreach email generation failed:", error);
+    throw new AppError(500, `Failed to generate outreach email: ${message}`);
   }
 }

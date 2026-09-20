@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
-import { GenerateOutreachEmailRequestSchema } from '../schemas/email.schema';
-import { generateOutreachEmail } from '../services/email.service';
-import { handleApiError } from '../utils/errors';
+import { GenerateOutreachEmailRequestSchema } from '../schemas/email.schema.js';
+import { generateOutreachEmail } from '../services/email.service.js';
+import { handleApiError } from '../utils/errors.js';
 
 export const emailRouter = Router();
 

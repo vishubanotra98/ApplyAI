@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
-import { AnalyzeJdRequestSchema } from '../schemas/jd.schema';
-import { analyzeJobDescription } from '../services/jd.service';
-import { handleApiError } from '../utils/errors';
+import { AnalyzeJdRequestSchema } from '../schemas/jd.schema.js';
+import { analyzeJobDescription } from '../services/jd.service.js';
+import { handleApiError } from '../utils/errors.js';
 
 export const jdRouter = Router();
 

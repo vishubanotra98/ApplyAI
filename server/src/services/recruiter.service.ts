@@ -1,131 +1,158 @@
-import { getGeminiClient, getModelName, extractJsonFromText } from './gemini.service';
-import { RECRUITER_SYSTEM_INSTRUCTION, buildRecruiterSearchPrompt } from '../prompts/recruiter.prompt';
+import {
+  getGeminiClient,
+  getModelName,
+  extractJsonFromText,
+} from "./gemini.service.js";
+
+import {
+  RECRUITER_SYSTEM_INSTRUCTION,
+  buildRecruiterSearchPrompt,
+} from "../prompts/recruiter.prompt.js";
+
 import {
   FindRecruiterRequest,
   FindRecruiterResponse,
   FindRecruiterResponseSchema,
   RecruiterResult,
-} from '../schemas/recruiter.schema';
-import { AppError } from '../utils/errors';
+} from "../schemas/recruiter.schema.js";
 
-export async function findRecruiter(data: FindRecruiterRequest): Promise<FindRecruiterResponse> {
+import { AppError } from "../utils/errors.js";
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function isPlaceholderEmail(email: string): boolean {
+  return /(example\.com|company\.com|email\.com)$/i.test(email);
+}
+
+function sanitizeRecruiter(recruiter: RecruiterResult): RecruiterResult {
+  let email = recruiter.email?.trim() || null;
+
+  const hasValidEmailFormat = email !== null && EMAIL_REGEX.test(email);
+
+  const isPlaceholder = email !== null && isPlaceholderEmail(email);
+
+  const hasEvidence =
+    recruiter.sourceUrls.length > 0 && recruiter.evidence.trim().length > 0;
+
+  // An email is retained only when it has valid formatting
+  // and supporting evidence supplied by the model.
+  if (!hasValidEmailFormat || isPlaceholder || !hasEvidence) {
+    email = null;
+  }
+
+  return {
+    ...recruiter,
+    email,
+    sourceUrls: recruiter.sourceUrls,
+  };
+}
+
+export async function findRecruiter(
+  data: FindRecruiterRequest,
+): Promise<FindRecruiterResponse> {
   const { company, jobTitle, location, jd } = data;
 
-  if (!company || !company.trim()) {
-    throw new AppError(400, 'Company name is required to search for recruiters.');
+  if (!company?.trim()) {
+    throw new AppError(
+      400,
+      "Company name is required to search for recruiters.",
+    );
   }
-  if (!jobTitle || !jobTitle.trim()) {
-    throw new AppError(400, 'Job title is required to search for recruiters.');
+
+  if (!jobTitle?.trim()) {
+    throw new AppError(400, "Job title is required to search for recruiters.");
   }
 
   const ai = getGeminiClient();
   const model = getModelName();
 
   try {
-    const prompt = buildRecruiterSearchPrompt(company, jobTitle, location, jd);
+    const prompt = buildRecruiterSearchPrompt(
+      company.trim(),
+      jobTitle.trim(),
+      location,
+      jd,
+    );
 
-    // Call Gemini with Google Search grounding
     const response = await ai.models.generateContent({
       model,
-      contents: `${prompt}
-
-IMPORTANT FORMAT INSTRUCTION: Output your entire response as a valid JSON object matching this schema:
-{
-  "recruiters": [
-    {
-      "name": "Full Name",
-      "title": "Title (e.g. Technical Recruiter or null)",
-      "company": "Company Name",
-      "email": "explicit public email or null",
-      "linkedin": "LinkedIn profile URL or null",
-      "sourceUrls": ["https://..."],
-      "evidence": "Brief description of why this person is relevant",
-      "confidence": "high" | "medium" | "low"
-    }
-  ],
-  "generalContactEmail": "careers@example.com or null",
-  "notes": "Short status summary"
-}
-Do not include any conversational filler before or after the JSON.`,
+      contents: prompt,
       config: {
         systemInstruction: RECRUITER_SYSTEM_INSTRUCTION,
-        tools: [{ googleSearch: {} }],
+        temperature: 0.1,
+        responseMimeType: "application/json",
       },
     });
 
-    const rawText = response.text;
+    const rawText = response.text?.trim();
+
     if (!rawText) {
       return {
         recruiters: [],
         generalContactEmail: null,
-        notes: 'No public recruiter information could be found for this position.',
+        notes:
+          "No public recruiter information could be found for this position.",
       };
     }
 
-    // Extract grounding URLs from metadata if available
-    const groundingUrls: string[] = [];
-    const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
-    if (Array.isArray(chunks)) {
-      for (const chunk of chunks) {
-        if (chunk && typeof chunk === 'object' && 'web' in chunk) {
-          const web = (chunk as { web?: { uri?: string } }).web;
-          if (web?.uri && typeof web.uri === 'string' && !groundingUrls.includes(web.uri)) {
-            groundingUrls.push(web.uri);
-          }
-        }
-      }
-    }
-
-    const cleanedJson = extractJsonFromText(rawText);
     let parsed: unknown;
+
     try {
-      parsed = JSON.parse(cleanedJson);
+      parsed = JSON.parse(extractJsonFromText(rawText));
     } catch {
-      // Fallback: If model returned markdown or non-strict JSON, attempt regex extraction
-      const jsonMatch = cleanedJson.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        parsed = JSON.parse(jsonMatch[0]);
-      } else {
-        throw new AppError(500, 'Model response could not be parsed as structured JSON.');
-      }
+      throw new AppError(
+        502,
+        "The recruiter search returned an invalid structured response.",
+      );
     }
 
-    // If recruiters array was returned at root level
+    // Support a root-level recruiters array as a defensive fallback.
     if (Array.isArray(parsed)) {
       parsed = { recruiters: parsed };
     }
 
-    const validated = FindRecruiterResponseSchema.parse(parsed);
+    const validationResult = FindRecruiterResponseSchema.safeParse(parsed);
 
-    // Strict Enforcement of Zero Fabrication Rule:
-    // If any email was returned without credible public evidence, or if it resembles an unverified guess,
-    // ensure source URLs are present or nullify email.
-    validated.recruiters = validated.recruiters.map((recruiter: RecruiterResult) => {
-      // Merge grounding URLs if recruiter has none
-      const sourceUrls = recruiter.sourceUrls.length > 0 ? recruiter.sourceUrls : groundingUrls.slice(0, 3);
+    if (!validationResult.success) {
+      console.error(
+        "[ApplyAI] Invalid recruiter response:",
+        JSON.stringify(validationResult.error.issues, null, 2),
+      );
 
-      // Verify email format and ensure it's not a generic placeholder
-      let verifiedEmail = recruiter.email ? recruiter.email.trim() : null;
-      if (verifiedEmail) {
-        // Reject placeholders like john.doe@example.com or name@company.com
-        const isPlaceholder = /example\.com|company\.com|email\.com/i.test(verifiedEmail) && !company.toLowerCase().includes('example');
-        const isValidFormat = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(verifiedEmail);
-        if (isPlaceholder || !isValidFormat) {
-          verifiedEmail = null;
-        }
-      }
+      console.error(
+        "[ApplyAI] Raw parsed recruiter response:",
+        JSON.stringify(parsed, null, 2),
+      );
 
-      return {
-        ...recruiter,
-        email: verifiedEmail,
-        sourceUrls,
-      };
-    });
+      throw new AppError(
+        502,
+        "The recruiter search returned an invalid response structure.",
+      );
+    }
+    const validated = validationResult.data;
 
-    return validated;
+    const recruiters = validated.recruiters.map((recruiter: RecruiterResult) =>
+      sanitizeRecruiter(recruiter),
+    );
+
+    return {
+      ...validated,
+      recruiters,
+    };
   } catch (error) {
-    if (error instanceof AppError) throw error;
-    const msg = error instanceof Error ? error.message : String(error);
-    throw new AppError(500, `Recruiter search failed: ${msg}`);
+    if (error instanceof AppError) {
+      throw error;
+    }
+
+    const message = error instanceof Error ? error.message : String(error);
+
+    console.error("[ApplyAI] Recruiter search failed:", error);
+
+    throw new AppError(
+      502,
+      "Recruiter search failed. Please try again later.",
+      message,
+      { cause: error },
+    );
   }
 }

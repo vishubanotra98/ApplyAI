@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
-import { FindRecruiterRequestSchema } from '../schemas/recruiter.schema';
-import { findRecruiter } from '../services/recruiter.service';
-import { handleApiError } from '../utils/errors';
+import { FindRecruiterRequestSchema } from '../schemas/recruiter.schema.js';
+import { findRecruiter } from '../services/recruiter.service.js';
+import { handleApiError } from '../utils/errors.js';
 
 export const recruiterRouter = Router();
 

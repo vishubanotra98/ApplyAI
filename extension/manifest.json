@@ -3,42 +3,44 @@
   "name": "ApplyAI — Personal Job Application Assistant",
   "version": "1.0.0",
   "description": "Tailor your LaTeX resume and find verified recruiter contact info directly on job postings.",
-  "permissions": [
-    "storage",
-    "activeTab",
-    "scripting",
-    "sidePanel"
-  ],
+
+  "permissions": ["storage", "activeTab", "scripting", "sidePanel"],
+
   "host_permissions": [
     "http://localhost/*",
-    "http://127.0.0.1/*"
+    "http://127.0.0.1/*",
+    "https://*/*",
+    "http://*/*"
   ],
+
   "background": {
     "service_worker": "background.js",
     "type": "module"
   },
+
   "action": {
     "default_title": "Open ApplyAI",
     "default_popup": "popup.html"
   },
+
   "side_panel": {
     "default_path": "sidepanel.html"
   },
+
   "content_scripts": [
     {
-      "matches": [
-        "https://*/*",
-        "http://*/*"
-      ],
+      "matches": ["https://*/*", "http://*/*"],
       "js": ["content.js"],
       "run_at": "document_idle"
     }
   ],
+
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
+
   "web_accessible_resources": [
     {
       "resources": ["assets/*"],
