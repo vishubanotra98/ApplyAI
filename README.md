@@ -4,57 +4,18 @@
 
 1. **Tailor Resume**: Adapts a user's master LaTeX resume template to a detected job posting, emphasizing real relevant skills and experience without ever fabricating facts.
 2. **Find Recruiter**: Searches public sources via Google Search grounding to identify verified recruiters and talent acquisition leads, strictly refusing to guess or hallucinate email addresses.
-
----
-
-## Architecture Overview
-
-```text
-┌────────────────────────────────────────────────────────┐
-│                   Google Chrome                        │
-│                                                        │
-│  [ Job Posting Page: LinkedIn, Greenhouse, Lever ]     │
-│             │                                          │
-│             ▼                                          │
-│     Content Script (detects pageText)                  │
-│             │                                          │
-│             ▼                                          │
-│     Floating Widget (✦) OR Chrome Side Panel           │
-│             │ (chrome.storage.local: facts, LaTeX)     │
-└─────────────┼──────────────────────────────────────────┘
-              │ HTTP (POST /api/...)
-              ▼
-┌────────────────────────────────────────────────────────┐
-│             Local Express Backend Server               │
-│                                                        │
-│   • POST /api/jd/analyze                               │
-│   • POST /api/resume/tailor                            │
-│   • POST /api/recruiter/find                           │
-│   • POST /api/resume/compile                           │
-│                                                        │
-│   Uses @google/genai with gemini-3.8-flash             │
-│   (API Key strictly isolated in backend .env)          │
-└────────────────────────────────────────────────────────┘
-```
-
 ---
 
 ## Prerequisites
 
 - **Node.js**: v18.0.0 or higher
 - **Google Chrome**: Version 116+ (supports Chrome Side Panel API & Manifest V3)
-- **Gemini API Key**: From [Google AI Studio](https://aistudio.google.com/)
+- **Gemini API Key**:
 - *(Optional)* **pdflatex**: For on-the-fly local PDF compilation. If not installed, you can still download the tailored `.tex` file directly and compile it with Overleaf or any LaTeX editor.
 
 ---
 
 ## Environment Variables
-
-Copy `.env.example` to `.env` in the root and server directory:
-
-```bash
-cp .env.example .env
-```
 
 | Variable | Description | Default |
 | :--- | :--- | :--- |
@@ -124,10 +85,3 @@ Click the **Settings** gear icon in the extension or floating widget:
 - An email is only provided if it was explicitly published on a public, indexable source (company website, official recruiting page, press release, GitHub).
 - If no public email exists, ApplyAI returns the recruiter's name, verified title, LinkedIn profile link, and relevant evidence, or falls back to the company's general careers contact (`careers@company.com`).
 
----
-
-## Debugging
-
-- **Check Server Logs**: Run `npm run dev` in a terminal to inspect request payloads and Gemini model calls.
-- **Inspect Extension**: In Chrome, right-click the floating `✦` button or side panel and select **Inspect**. Check the Console tab for network errors or storage warnings.
-- **Run Unit Tests**: Run `npm test` to verify JD validation, resume schema constraints, and recruiter parsers.
